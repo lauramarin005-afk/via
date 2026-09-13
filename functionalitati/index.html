@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Funcționalitățile VIA</title>
+<meta name="description" content="Agenda personală de oraș, construită cu AI: VIA urmărește Bucureștiul și te anunță doar când apare ceva care merită pentru tine, cu motivul afișat.">
+<meta name="theme-color" content="#0D0D0F">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%230D0D0F%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2232%22%20r%3D%2217%22%20fill%3D%22%233A6BFF%22%20opacity%3D%22.35%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2232%22%20r%3D%2210%22%20fill%3D%22%233A6BFF%22%2F%3E%3C%2Fsvg%3E">
+<!-- Material de lucru pentru parteneri: cine are linkul îl deschide, dar nu apare in cautari. -->
+<meta name="robots" content="noindex, nofollow">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Funcționalitățile VIA">
+<meta property="og:description" content="Agenda personală de oraș, construită cu AI: VIA urmărește Bucureștiul și te anunță doar când apare ceva care merită pentru tine, cu motivul afișat.">
+<meta property="og:locale" content="ro_RO">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Funcționalitățile VIA">
+<meta name="twitter:description" content="Agenda personală de oraș, construită cu AI: VIA urmărește Bucureștiul și te anunță doar când apare ceva care merită pentru tine, cu motivul afișat.">
+
+<style>
+  /* Ce adăuga automat platforma de publicare; aici îl scriem explicit. */
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<style>
+  /* Identitatea VIA, o singură temă asumată: negru profund + albastru VIA. */
+  :root {
+    --bg: #0D0D0F;
+    --surface: #141417;
+    --surface-2: #1B1B1F;
+    --line: rgba(255, 255, 255, 0.09);
+    --line-2: rgba(255, 255, 255, 0.16);
+    --text: #FFFFFF;
+    --text-2: #A3A3AB;
+    --text-3: #6B6B6B;
+    --accent: #3A6BFF;
+    --accent-soft: rgba(58, 107, 255, 0.13);
+    --good: #34D399;
+    --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, "Helvetica Neue", Arial, sans-serif;
+    --display: "Segoe UI Variable Display", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font); font-size: 15px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 48px 96px; }
+
+  h1, h2, h3 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; text-wrap: balance; font-weight: 600; }
+  h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.04; letter-spacing: -0.035em; }
+  h2 { font-size: clamp(22px, 3vw, 28px); }
+  h3 { font-size: 16px; }
+  p { margin: 0; }
+  .eyebrow { font-size: 11.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-3); }
+  .lede { color: var(--text-2); font-size: 17px; max-width: 60ch; }
+  .muted { color: var(--text-2); }
+  .dot { color: var(--accent); }
+  a { color: var(--accent); }
+
+  section { margin-top: 72px; display: flex; flex-direction: column; gap: 22px; }
+  .sec-head { display: flex; flex-direction: column; gap: 8px; max-width: 68ch; }
+
+  /* ---------- hero ---------- */
+  .hero { display: flex; flex-direction: column; gap: 22px; padding-bottom: 8px; }
+  .hero-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .mark .s { fill: none; stroke: #fff; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+  .orb {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block;
+    box-shadow: 0 0 14px 3px rgba(58, 107, 255, 0.55); animation: puls 3.6s ease-in-out infinite;
+  }
+  @keyframes puls { 0%, 100% { box-shadow: 0 0 8px 1px rgba(58,107,255,.4); } 50% { box-shadow: 0 0 18px 5px rgba(58,107,255,.65); } }
+  .status { display: inline-flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--text-2); }
+
+  .thesis {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 10px;
+  }
+  .thesis div { border-top: 1px solid var(--line-2); padding-top: 12px; }
+  .thesis b { display: block; font-size: 14px; margin-bottom: 2px; }
+  .thesis span { font-size: 13.5px; color: var(--text-2); }
+
+  /* ---------- tabel de poziționare ---------- */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; }
+  table { border-collapse: collapse; width: 100%; min-width: 700px; font-size: 13.5px; }
+  th, td { padding: 13px 16px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-weight: 600; font-size: 12.5px; background: var(--surface); }
+  thead th small { display: block; font-weight: 400; color: var(--text-3); font-size: 11.5px; margin-top: 2px; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td:first-child { color: var(--text-2); width: 26%; }
+  th.via, td.via { background: var(--accent-soft); }
+  th.via { color: #fff; }
+  .da { color: var(--good); font-weight: 600; }
+  .nu { color: var(--text-3); }
+  .partial { color: var(--text-2); }
+
+  /* ---------- inspirație ---------- */
+  .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .box { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .box .src { font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+  .box ul { margin: 0; padding-left: 18px; color: var(--text-2); font-size: 13.5px; display: flex; flex-direction: column; gap: 4px; }
+
+  /* ---------- faze ---------- */
+  .faza { border: 1px solid var(--line); border-radius: 20px; overflow: hidden; }
+  .faza-head {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    padding: 20px 22px; background: var(--surface); border-bottom: 1px solid var(--line);
+  }
+  .faza-nr { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+  .faza-head h3 { font-size: 19px; }
+  .faza-head .muted { font-size: 13.5px; flex-basis: 100%; }
+  .faza.mvp { border-color: rgba(58, 107, 255, 0.45); }
+  .faza.mvp .faza-head { background: linear-gradient(90deg, rgba(58,107,255,.14), var(--surface) 70%); }
+
+  .feats { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+  .feat { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+  .feat h4 { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .feat p { font-size: 13.5px; color: var(--text-2); }
+  .feat .ex { font-size: 12.5px; color: var(--text-3); font-style: italic; }
+  .tag { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .tag.nucleu { background: var(--accent); color: #fff; }
+  .tag.venit { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+
+  /* ---------- scor ---------- */
+  .score-row { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; }
+  .ring { width: 132px; height: 132px; position: relative; flex: none; }
+  .ring svg { transform: rotate(-90deg); }
+  .ring b { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--mono); font-size: 40px; letter-spacing: -0.04em; }
+  .layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 18px; }
+  .layer { display: grid; grid-template-columns: 1fr 34px; gap: 10px; align-items: center; font-size: 13px; }
+  .layer .bar { grid-column: 1 / -1; height: 4px; background: var(--surface-2); border-radius: 999px; overflow: hidden; margin-top: -4px; }
+  .layer .bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+  .layer .v { text-align: right; font-family: var(--mono); color: var(--text-2); }
+
+  /* ---------- principii / listă ---------- */
+  .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+  .rule { border-left: 2px solid var(--accent); padding: 4px 0 4px 14px; }
+  .rule b { display: block; font-size: 14.5px; }
+  .rule span { font-size: 13px; color: var(--text-2); }
+
+  .plan { display: flex; flex-direction: column; }
+  .step { display: grid; grid-template-columns: 110px 1fr; gap: 18px; padding: 16px 0; border-top: 1px solid var(--line); }
+  .step:last-child { border-bottom: 1px solid var(--line); }
+  .step .when { font-family: var(--mono); font-size: 12.5px; color: var(--accent); padding-top: 2px; }
+  .step b { display: block; font-size: 14.5px; margin-bottom: 2px; }
+  .step span { font-size: 13.5px; color: var(--text-2); }
+
+  .callout {
+    background: var(--surface); border: 1px solid var(--line-2); border-radius: 16px; padding: 18px 20px;
+    display: flex; gap: 14px; align-items: flex-start;
+  }
+  .callout .orb { margin-top: 7px; flex: none; }
+  .callout p { font-size: 14px; color: var(--text-2); }
+  .callout b { color: var(--text); }
+
+  footer { margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: center; }
+  footer .tag-line { font-size: 15px; }
+
+  @media (max-width: 620px) {
+    .score-row { grid-template-columns: 1fr; justify-items: start; }
+    .step { grid-template-columns: 1fr; gap: 4px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .orb { animation: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ HERO ============ -->
+  <header class="hero">
+    <div class="hero-top">
+      <svg class="mark" width="104" height="29" viewBox="0 0 144 40" role="img" aria-label="VIA">
+        <path class="s" d="M6 6 L22 34 L38 6"/>
+        <path class="s" d="M56 6 L56 34"/>
+        <path class="s" d="M74 34 L90 6 L106 34"/>
+        <circle cx="128" cy="20" r="10" fill="rgba(58,107,255,.45)"/>
+        <circle cx="128" cy="20" r="5.6" fill="#3A6BFF"/>
+      </svg>
+      <span class="status"><span class="orb"></span>Funcționalități</span>
+    </div>
+
+    <p class="eyebrow">Lifestyle · AI · România</p>
+    <h1>We watch.<br>You live<span class="dot">.</span></h1>
+    <p class="lede">
+      VIA nu îți arată tot ce se întâmplă în oraș. Îți arată doar ce merită pentru tine,
+      exact când contează — și îți spune de ce.
+    </p>
+
+    <div class="thesis">
+      <div><b>Personal, nu editorial</b><span>Fiecare om vede altă agendă, construită din gusturile, bugetul și timpul lui.</span></div>
+      <div><b>Proactiv, nu de consultat</b><span>Nu intri tu să cauți. VIA te anunță când apare ceva care merită.</span></div>
+      <div><b>Explicat, nu impus</b><span>Fiecare recomandare vine cu un scor de relevanță și cu motivul lui.</span></div>
+    </div>
+  </header>
+
+  <!-- ============ POZIȚIONARE ============ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Unde ne așezăm</p>
+      <h2>Ce există azi și ce lipsește</h2>
+      <p class="muted">Piața are ghiduri bune și platforme de bilete bune. Niciuna nu știe cine ești.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Ghiduri de evenimente<small>agende de oraș, aceleași pentru toți</small></th>
+            <th>Platforme de bilete<small>vânzare de bilete pe eveniment</small></th>
+            <th>Asistenți AI generaliști<small>chat pe orice subiect</small></th>
+            <th class="via">VIA<small style="color:#A3A3AB">lifestyle personal cu AI</small></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Aceeași listă pentru toată lumea</td><td class="partial">da</td><td class="partial">da</td><td class="nu">—</td><td class="via da">nu, personală</td></tr>
+          <tr><td>Te anunță singur când apare ceva</td><td class="nu">nu</td><td class="partial">pe eveniment cumpărat</td><td class="nu">nu</td><td class="via da">da, filtrat</td></tr>
+          <tr><td>Explică de ce ți se potrivește</td><td class="nu">nu</td><td class="nu">nu</td><td class="partial">dacă întrebi</td><td class="via da">mereu</td></tr>
+          <tr><td>Știe ce se întâmplă acum în orașul tău</td><td class="da">da</td><td class="da">da</td><td class="nu">limitat</td><td class="via da">da</td></tr>
+          <tr><td>Ține cont de buget, timp și cu cine ieși</td><td class="nu">nu</td><td class="nu">nu</td><td class="partial">dacă îi spui</td><td class="via da">da, învață</td></tr>
+          <tr><td>Duce până la bilet sau rezervare</td><td class="partial">trimite mai departe</td><td class="da">da</td><td class="nu">nu</td><td class="via da">da, din faza 2</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ INSPIRAȚIE ============ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Ce împrumutăm</p>
+      <h2>Trei modele din care construim</h2>
+    </div>
+
+    <div class="grid3">
+      <div class="box">
+        <span class="src">Ghidurile de oraș</span>
+        <h3>Ritualul „unde ieșim diseară"</h3>
+        <ul>
+          <li>Acoperire completă pe oraș: concerte, teatru, expoziții, restaurante</li>
+          <li>Ritmul săptămânal — agenda de weekend</li>
+          <li>Încrederea venită din curatoriere, nu din reclamă</li>
+        </ul>
+      </div>
+      <div class="box">
+        <span class="src">Asistenții AI personali · tip Gio</span>
+        <h3>AI care lucrează din profilul tău</h3>
+        <ul>
+          <li>Onboarding scurt care te învață, nu un formular</li>
+          <li>Rezultat generat personal, gata de folosit</li>
+          <li>Conținut ușor de distribuit pe social media</li>
+        </ul>
+      </div>
+      <div class="box">
+        <span class="src">Muzica personalizată · Discover Weekly</span>
+        <h3>Surpriza care pare făcută de mână</h3>
+        <ul>
+          <li>O selecție scurtă, livrată la aceeași oră, în fiecare săptămână</li>
+          <li>Se îmbunătățește din fiecare „îmi place / nu"</li>
+          <li>Motivul pentru care oamenii revin</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SURSELE DE DATE ============ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Ce alimentează VIA</p>
+      <h2>De unde vin datele</h2>
+      <p class="muted">Scorul e bun doar dacă datele sunt bune. Trei straturi, primul deja construit pentru București.</p>
+    </div>
+
+    <div class="grid3">
+      <div class="box">
+        <span class="src">Stratul automat</span>
+        <h3>Ce citim singuri din oraș</h3>
+        <ul>
+          <li>Ghidurile de evenimente: concerte, teatru, expoziții, ateliere</li>
+          <li>Programul tuturor cinematografelor, cu ore și format</li>
+          <li>Catalogul locurilor — adresă, orar, telefon: 651 în București</li>
+          <li>Paginile și conturile oficiale ale cluburilor și restaurantelor</li>
+        </ul>
+      </div>
+      <div class="box">
+        <span class="src">Stratul propriu</span>
+        <h3>Baza noastră de date</h3>
+        <ul>
+          <li>Intrări scrise de noi, din experiență directă și din informații de primă mână</li>
+          <li>Ce nu ajunge niciodată online: seri private, deschideri, chef nou, o masă care merită</li>
+          <li>Intrarea proprie are prioritate față de orice crawler</li>
+          <li>Aici se naște avantajul pe care un agregator nu-l poate copia</li>
+        </ul>
+      </div>
+      <div class="box">
+        <span class="src">Stratul de călătorie și masă</span>
+        <h3>Travel și restaurante</h3>
+        <ul>
+          <li>Prețuri de zbor și hotel urmărite în timp — de acolo vine „sub media pieței"</li>
+          <li>TripAdvisor și Booking pentru reputație, recenzii reale și disponibilitate</li>
+          <li>Weekendurile următoare, cu destinații urmărite continuu</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:16px">
+      <span class="orb"></span>
+      <p><b>Stratul propriu e cel care ne diferențiază.</b>
+      Datele publice le are oricine, mai devreme sau mai târziu. Ce știm noi despre un loc
+      pentru că am fost acolo, sau pentru că ne-a spus cineva din interior, intră direct în
+      baza de date și cântărește mai mult decât orice sursă automată. Sursele externe se
+      citesc prin API-uri oficiale sau cu acordul lor, cu legătură înapoi spre sursă.</p>
+    </div>
+  </section>
+
+  <!-- ============ SCORUL ============ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Inovația centrală</p>
+      <h2>VIA Relevance Score™</h2>
+      <p class="muted">
+        Un număr de la 1 la 100 pe fiecare recomandare. Nu spune cât de popular e ceva, ci cât de mult contează pentru tine.
+        Același concert poate avea 94 pentru un om și 38 pentru altul. Sub 70 nu afișăm nimic.
+      </p>
+    </div>
+
+    <div class="box">
+      <div class="score-row">
+        <div class="ring">
+          <svg width="132" height="132" viewBox="0 0 132 132" aria-hidden="true">
+            <circle cx="66" cy="66" r="58" fill="none" stroke="#1B1B1F" stroke-width="9"/>
+            <circle cx="66" cy="66" r="58" fill="none" stroke="#3A6BFF" stroke-width="9" stroke-linecap="round"
+                    stroke-dasharray="364.4" stroke-dashoffset="21.9"/>
+          </svg>
+          <b>94</b>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div>
+            <h3>Concert într-un club din București, vineri 21:00</h3>
+            <p class="muted" style="font-size:13.5px">Exemplu: cum arată scorul descompus pe cele șase straturi.</p>
+          </div>
+          <div class="layers">
+            <div class="layer"><span>Gusturi învățate</span><span class="v">97</span><span class="bar"><i style="width:97%"></i></span></div>
+            <div class="layer"><span>Context personal</span><span class="v">95</span><span class="bar"><i style="width:95%"></i></span></div>
+            <div class="layer"><span>Momentul potrivit</span><span class="v">93</span><span class="bar"><i style="width:93%"></i></span></div>
+            <div class="layer"><span>Valoare / preț</span><span class="v">90</span><span class="bar"><i style="width:90%"></i></span></div>
+            <div class="layer"><span>Unicitatea experienței</span><span class="v">88</span><span class="bar"><i style="width:88%"></i></span></div>
+            <div class="layer"><span>Reputație și recenzii reale</span><span class="v">86</span><span class="bar"><i style="width:86%"></i></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FUNCȚIONALITĂȚI ============ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Funcționalități</p>
+      <h2>Ce construim, în ordinea în care construim</h2>
+      <p class="muted">
+        Patru faze, aliniate cu roadmap-ul VIA. Faza 1 este produsul pe care îl lansăm;
+        fiecare fază următoare se construiește peste datele și încrederea câștigate în cea dinainte.
+      </p>
+    </div>
+
+    <!-- FAZA 1 -->
+    <div class="faza mvp">
+      <div class="faza-head">
+        <span class="faza-nr">FAZA 1</span>
+        <h3>MVP · Interese și alerte</h3>
+        <p class="muted">Lansare în București. Omul își spune gusturile, VIA urmărește orașul și îl anunță doar când merită.</p>
+      </div>
+      <div class="feats">
+        <div class="feat">
+          <h4>Profil de gust în 60 de secunde <span class="tag nucleu">nucleu</span></h4>
+          <p>Orașul, categoriile preferate, zece carduri de „îmi place / nu", buget obișnuit și serile libere. Opțional: artiștii ascultați.</p>
+          <p class="ex">Fără formular lung — VIA învață din alegeri, nu din întrebări.</p>
+        </div>
+        <div class="feat">
+          <h4>Agenda mea <span class="tag nucleu">nucleu</span></h4>
+          <p>„Ce fac diseară" și „Ce fac în weekend", ordonate după scorul de relevanță. Concerte, teatru, stand-up, expoziții, restaurante, locuri noi.</p>
+          <p class="ex">Același oraș, dar fiecare om primește altă ediție.</p>
+        </div>
+        <div class="feat">
+          <h4>Alerte inteligente <span class="tag nucleu">nucleu</span></h4>
+          <p>Bilete puse în vânzare, ultimele locuri, preț scăzut, restaurant nou pe gustul tău, expoziție care se închide. Maximum trei pe zi.</p>
+          <p class="ex">„Au apărut bilete la artistul pe care îl asculți cel mai des. Categoriile bune se termină de obicei în două zile."</p>
+        </div>
+        <div class="feat">
+          <h4>De ce ți-o arăt <span class="tag nucleu">nucleu</span></h4>
+          <p>Fiecare recomandare își afișează scorul și motivul în limbaj natural. Transparența e ceea ce construiește încrederea.</p>
+        </div>
+        <div class="feat">
+          <h4>Urmărește</h4>
+          <p>Un buton pe orice artist, locație, teatru sau bucătar. VIA te anunță când apare ceva nou legat de ei.</p>
+        </div>
+        <div class="feat">
+          <h4>Feedback dintr-un gest</h4>
+          <p>Îmi place, nu mă interesează, nu acum. Fiecare atingere recalibrează profilul și scorurile viitoare.</p>
+        </div>
+        <div class="feat">
+          <h4>Salvează și amintește</h4>
+          <p>Adaugă în calendar, primești o amintire la momentul potrivit — nu cu o săptămână înainte, ci când trebuie să pleci.</p>
+        </div>
+        <div class="feat">
+          <h4>Genie — întreabă în cuvintele tale</h4>
+          <p>Companionul personalizabil din VIA. Înțelege cereri complete, nu doar cuvinte-cheie.</p>
+          <p class="ex">„Ceva liniștit vineri seara, cu prietena mea, până în 300 de lei, nu departe de Piața Romană."</p>
+        </div>
+        <div class="feat">
+          <h4>Weekendul tău, joi seara</h4>
+          <p>O selecție scurtă pentru weekend, livrată în fiecare joi la aceeași oră. Ritualul pentru care oamenii revin.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- FAZA 2 -->
+    <div class="faza">
+      <div class="faza-head">
+        <span class="faza-nr">FAZA 2</span>
+        <h3>Acțiuni · De la recomandare la ieșire</h3>
+        <p class="muted">VIA nu se mai oprește la „merge să vezi". Duce omul până la bilet, masă rezervată și plan complet.</p>
+      </div>
+      <div class="feats">
+        <div class="feat">
+          <h4>Bilete și rezervări în aplicație <span class="tag venit">venit</span></h4>
+          <p>Cumpărare de bilete și rezervare de mese prin parteneri, fără să pleci din VIA.</p>
+        </div>
+        <div class="feat">
+          <h4>Seara compusă</h4>
+          <p>Genie propune un plan întreg: cină aproape de locație, spectacolul, cum ajungi și la ce oră pleci.</p>
+        </div>
+        <div class="feat">
+          <h4>Ieșim împreună</h4>
+          <p>Trimiți o propunere prietenilor, votează, VIA găsește seara în care toți sunt liberi și scorul care se potrivește grupului.</p>
+        </div>
+        <div class="feat">
+          <h4>Seara mea, de distribuit</h4>
+          <p>Card vizual gata pentru Instagram Stories după o ieșire găsită prin VIA. Creștere organică din mâna utilizatorilor.</p>
+        </div>
+        <div class="feat">
+          <h4>City break</h4>
+          <p>Monitorizare de zboruri și cazare pentru weekenduri lungi, cu alertă când prețul coboară sub media istorică.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- FAZA 3 -->
+    <div class="faza">
+      <div class="faza-head">
+        <span class="faza-nr">FAZA 3</span>
+        <h3>Automatizare · VIA care anticipează</h3>
+        <p class="muted">VIA folosește contextul în timp real ca să recomande ceva potrivit exact acum, nu doar în general.</p>
+      </div>
+      <div class="feats">
+        <div class="feat">
+          <h4>Context în timp real</h4>
+          <p>Vreme, trafic, cât de aglomerat e locul, programul tău din calendar. Aceeași seară primește recomandări diferite dacă plouă.</p>
+        </div>
+        <div class="feat">
+          <h4>Starea ta contează</h4>
+          <p>Cu acordul utilizatorului, somnul și activitatea influențează recomandarea: după o săptămână grea, ceva liniștit.</p>
+        </div>
+        <div class="feat">
+          <h4>Genie cu voce</h4>
+          <p>Conversație vocală în română, cu voci înregistrate în studio pentru fiecare companion.</p>
+        </div>
+        <div class="feat">
+          <h4>Mai multe orașe</h4>
+          <p>Cluj, Timișoara, Iași, Brașov, pe măsură ce sursele de date locale sunt acoperite.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- FAZA 4 -->
+    <div class="faza">
+      <div class="faza-head">
+        <span class="faza-nr">FAZA 4</span>
+        <h3>Plăți și ecosistem</h3>
+        <p class="muted">VIA devine stratul dintre oameni și tot ce oferă orașul.</p>
+      </div>
+      <div class="feats">
+        <div class="feat">
+          <h4>VIA Pass <span class="tag venit">venit</span></h4>
+          <p>Abonament cu beneficii reale la parteneri: acces prioritar la bilete, reduceri, mese garantate.</p>
+        </div>
+        <div class="feat">
+          <h4>Plăți integrate <span class="tag venit">venit</span></h4>
+          <p>Un singur loc de plată pentru bilete, rezervări și experiențe, cu istoric și împărțirea notei cu prietenii.</p>
+        </div>
+        <div class="feat">
+          <h4>VIA pentru organizatori <span class="tag venit">venit</span></h4>
+          <p>Portal pentru locații și organizatori: își publică evenimentele și văd audiența potrivită. Pot plăti pentru date, niciodată pentru poziție.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PRINCIPII ============ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Non-negociabile</p>
+      <h2>Regulile care fac VIA credibil</h2>
+      <p class="muted">Ghidurile de evenimente pierd încredere când clasamentul se poate cumpăra. Aici e diferența noastră pe termen lung.</p>
+    </div>
+    <div class="rules">
+      <div class="rule"><b>Nimeni nu cumpără locul în clasament</b><span>Scorul nu se vinde. Partenerii plătesc pentru tranzacții și date, nu pentru vizibilitate.</span></div>
+      <div class="rule"><b>Maximum trei alerte pe zi</b><span>Dacă VIA devine încă o sursă de zgomot, și-a pierdut rostul.</span></div>
+      <div class="rule"><b>Sub 70 nu arătăm nimic</b><span>Mai bine tăcere decât o recomandare slabă.</span></div>
+      <div class="rule"><b>Fiecare scor își spune motivul</b><span>Fără cutii negre. Omul vede de ce i se potrivește.</span></div>
+      <div class="rule"><b>Datele rămân ale utilizatorului</b><span>Acord explicit pentru fiecare sursă, oprire oricând, conformitate GDPR.</span></div>
+    </div>
+  </section>
+
+  <!-- ============ VENIT ============ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Model de business</p>
+      <h2>De unde vin banii</h2>
+    </div>
+    <div class="grid3">
+      <div class="box"><span class="src">Utilizatori</span><h3>Abonament Premium</h3>
+        <p class="muted" style="font-size:13.5px">Alerte nelimitate pe categorii, seara compusă, ieșiri în grup, city break. Nivel gratuit cu agenda și trei alerte pe zi.</p></div>
+      <div class="box"><span class="src">Tranzacții</span><h3>Comisioane</h3>
+        <p class="muted" style="font-size:13.5px">Din bilete și rezervări finalizate prin VIA. Venit legat direct de valoarea livrată.</p></div>
+      <div class="box"><span class="src">Parteneri</span><h3>VIA pentru organizatori</h3>
+        <p class="muted" style="font-size:13.5px">Date despre audiență și instrumente de publicare pentru locații și organizatori, fără poziții plătite.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ MĂSURĂM ============ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Cum știm că merge</p>
+      <h2>Ce urmărim în MVP</h2>
+      <p class="muted">Ținte concrete le fixăm după primele patru săptămâni de beta, pe date reale, nu pe estimări.</p>
+    </div>
+    <div class="rules">
+      <div class="rule"><b>Rata de deschidere a alertelor</b><span>Dovada că filtrul e bun. O alertă ignorată e zgomot.</span></div>
+      <div class="rule"><b>Recomandări salvate sau cumpărate</b><span>Dovada că scorul prezice ce vrea omul cu adevărat.</span></div>
+      <div class="rule"><b>Ieșiri generate pe săptămână</b><span>Metrica pe care o vindem partenerilor.</span></div>
+      <div class="rule"><b>Retenție săptămânală</b><span>Dacă oamenii revin joi seara, ritualul funcționează.</span></div>
+    </div>
+  </section>
+
+  <!-- ============ PAȘII URMĂTORI ============ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Unde suntem</p>
+      <h2>Ce e făcut și ce urmează</h2>
+    </div>
+
+    <div class="callout">
+      <span class="orb"></span>
+      <p><b>Partea cea mai riscantă e deja rezolvată: datele.</b>
+      Stratul de date pentru București funcționează — evenimentele săptămânii, programul
+      tuturor cinematografelor, catalogul de 651 de locuri și tabelul în care scriem noi
+      ce știm din experiență. Scorul are deja pe ce să lucreze, iar prototipul se poate
+      arăta pe date reale, nu pe exemple inventate.</p>
+    </div>
+
+    <div class="plan">
+      <div class="step"><span class="when">Făcut</span><div><b>Stratul de date, București</b>
+        <span>Schema, crawlerii pentru ghiduri, cinematografe și localuri, catalogul de locuri, tabelul de intrări proprii, deduplicarea între surse.</span></div></div>
+      <div class="step"><span class="when">Săpt. 1–3</span><div><b>Motorul de relevanță, versiunea 1</b>
+        <span>Profilul de gust, cele șase straturi ale scorului și explicația în limbaj natural, calculate peste datele reale.</span></div></div>
+      <div class="step"><span class="when">Săpt. 4–8</span><div><b>Aplicația mobilă</b>
+        <span>iOS și Android dintr-un singur cod: profil de gust, Agenda mea, alerte, urmărește, salvează.</span></div></div>
+      <div class="step"><span class="when">Săpt. 9–10</span><div><b>Genie și weekendul de joi</b>
+        <span>Conversație în limbaj natural peste datele reale și selecția săptămânală.</span></div></div>
+      <div class="step"><span class="when">Săpt. 11–13</span><div><b>Beta închis</b>
+        <span>O sută de utilizatori din București, măsurăm cele patru metrici, calibrăm scorul.</span></div></div>
+    </div>
+    <p class="muted" style="font-size:12.5px">Ritmul e calculat pentru noi doi care construim, nu pentru o echipă: câte o direcție pe rând, cu ceva funcțional la fiecare pas. Se scurtează dacă aducem oameni, dar nu depinde de asta ca să pornească.</p>
+  </section>
+
+  <footer>
+    <span class="tag-line">Lifestyle personal, cu AI<span class="dot">.</span></span>
+    <span class="status"><span class="orb"></span>VIA · 2026</span>
+  </footer>
+</div>
+
+</body>
+</html>

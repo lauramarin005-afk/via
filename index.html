@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VIA</title>
+<meta name="description" content="VIA — companion AI pentru viața de oraș. We watch. You live.">
+<meta name="theme-color" content="#0D0D0F">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%230D0D0F%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2232%22%20r%3D%2217%22%20fill%3D%22%233A6BFF%22%20opacity%3D%22.35%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2232%22%20r%3D%2210%22%20fill%3D%22%233A6BFF%22%2F%3E%3C%2Fsvg%3E">
+<meta name="robots" content="noindex, nofollow">
+<meta property="og:type" content="website">
+<meta property="og:title" content="VIA">
+<meta property="og:description" content="Companion AI pentru viața de oraș. We watch. You live.">
+<meta property="og:locale" content="ro_RO">
+<style>
+  :root {
+    --bg: #0D0D0F;
+    --surface: #141417;
+    --line: rgba(255, 255, 255, 0.09);
+    --line-2: rgba(255, 255, 255, 0.18);
+    --text: #FFFFFF;
+    --text-2: #A3A3AB;
+    --text-3: #6B6B6B;
+    --accent: #3A6BFF;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont,
+                 system-ui, "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; justify-content: center; min-height: 100vh;
+  }
+  .wrap { width: 100%; max-width: 760px; padding-inline: 20px; padding-block: 56px; }
+  .mark { display: block; margin-bottom: 30px; }
+  .mark .s { fill: none; stroke: var(--text); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+  h1 {
+    font-family: "Segoe UI Variable Display", "Segoe UI", -apple-system, system-ui, sans-serif;
+    font-size: clamp(32px, 6vw, 50px); line-height: 1.05; letter-spacing: -0.035em;
+    font-weight: 600; margin: 0;
+  }
+  h1 .dot { color: var(--accent); }
+  .lede { color: var(--text-2); font-size: 16.5px; max-width: 52ch; margin: 16px 0 40px; }
+  .carduri { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+    padding: 22px; display: flex; flex-direction: column; gap: 8px;
+    text-decoration: none; color: inherit;
+    transition: transform 220ms cubic-bezier(.2,.8,.3,1), border-color 220ms;
+  }
+  .card:hover { transform: translateY(-3px); border-color: var(--line-2); }
+  .nume { font-size: 18px; font-weight: 600; }
+  .rezumat { font-size: 13.5px; color: var(--text-2); }
+  .mergi { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); font-size: 13px; margin-top: 8px; }
+  footer { margin-top: 44px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+           color: var(--text-3); font-size: 12.5px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <svg class="mark" width="104" height="29" viewBox="0 0 144 40" role="img" aria-label="VIA">
+      <path class="s" d="M6 6 L22 34 L38 6"/>
+      <path class="s" d="M56 6 L56 34"/>
+      <path class="s" d="M74 34 L90 6 L106 34"/>
+      <circle cx="128" cy="20" r="10" fill="#3A6BFF" opacity=".45"/>
+      <circle cx="128" cy="20" r="5.6" fill="#3A6BFF"/>
+    </svg>
+
+    <h1>We watch.<br>You live<span class="dot">.</span></h1>
+    <p class="lede">
+      Companion AI pentru viața de oraș. Îți spui ce te interesează, VIA urmărește
+      orașul și te anunță doar când apare ceva care merită — cu motivul afișat.
+    </p>
+
+    <div class="carduri">
+      <a class="card" href="functionalitati/">
+        <span class="nume">Funcționalități</span>
+        <span class="rezumat">Poziționare, sursele de date, VIA Relevance Score, cele patru faze, modelul de business și planul de construcție.</span>
+        <span class="mergi">Deschide <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+          stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></span>
+      </a>
+      <a class="card" href="prototip/">
+        <span class="nume">Prototipul</span>
+        <span class="rezumat">Aplicația, clic cu clic: onboarding, alegerea companionului, ecranele Acasă, Explorează și Alerte, cu evenimentele reale din București.</span>
+        <span class="mergi">Deschide <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+          stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></span>
+      </a>
+    </div>
+
+    <footer>
+      <span>VIA · București · 2026</span>
+      <span>Material de lucru, pentru parteneri.</span>
+    </footer>
+  </div>
+</body>
+</html>
