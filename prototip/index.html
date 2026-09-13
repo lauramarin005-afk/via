@@ -1273,13 +1273,54 @@ const ALERTE = [
 const ALERTE_SCRIPT = ALERTE.slice();
 let AGENDA_META = null;
 
-/* Restul profilului de gust: ce nu se bifează, se declară. Deocamdată fix;
-   pasul următor e să iasă din onboarding. */
-const GUST = {
+/* Restul profilului de gust: ce nu se bifează în Explorează, se declară în onboarding. */
+const GUST_IMPLICIT = {
   buget: 150,                       // lei pentru o seară, per persoană
   seriLibere: [4, 5, 6],            // joi, vineri, sâmbătă (0 = duminică)
   artisti: ['Cargo', 'Coma', 'Metallica'],
 };
+
+const GUST = { ...GUST_IMPLICIT };
+
+/* Cât e o seară, în trei trepte. Bugetul intră direct în stratul „valoare și preț". */
+const BUGETE = [
+  { v: 80, t: 'Până în 80 lei', s: 'caut ce e ieftin sau gratuit' },
+  { v: 150, t: 'În jur de 150 lei', s: 'o seară obișnuită' },
+  { v: 350, t: 'Peste 300 lei', s: 'contează experiența, nu prețul' },
+];
+
+const ZILE_SCURT = ['D', 'L', 'Ma', 'Mi', 'J', 'V', 'S'];
+const ZILE_LUNGI = ['duminică', 'luni', 'marți', 'miercuri', 'joi', 'vineri', 'sâmbătă'];
+
+const CHEIE_STOCARE = 'via-profil-gust';
+
+/** Profilul rămâne între vizite. Dacă browserul refuză stocarea, mergem mai departe. */
+function salveazaGust() {
+  try {
+    localStorage.setItem(CHEIE_STOCARE, JSON.stringify({
+      buget: GUST.buget,
+      seriLibere: GUST.seriLibere,
+      artisti: GUST.artisti,
+      oprite: Object.entries(INTERESE).flatMap(([k, lista]) =>
+        lista.map((it, i) => (it.on ? null : k + ':' + i)).filter(Boolean)),
+    }));
+  } catch (e) { /* fereastră privată sau stocare blocată — profilul trăiește doar în sesiune */ }
+}
+
+function incarcaGust() {
+  let salvat = null;
+  try { salvat = JSON.parse(localStorage.getItem(CHEIE_STOCARE) || 'null'); } catch (e) { salvat = null; }
+  if (!salvat) return;
+  if (Number(salvat.buget) > 0) GUST.buget = Number(salvat.buget);
+  if (Array.isArray(salvat.seriLibere)) GUST.seriLibere = salvat.seriLibere.filter((z) => z >= 0 && z <= 6);
+  if (Array.isArray(salvat.artisti)) GUST.artisti = salvat.artisti;
+  if (Array.isArray(salvat.oprite)) {
+    const oprite = new Set(salvat.oprite);
+    for (const [k, lista] of Object.entries(INTERESE)) {
+      lista.forEach((it, i) => { it.on = !oprite.has(k + ':' + i); });
+    }
+  }
+}
 
 /** Ce rămâne din exemple când sosesc datele reale. */
 const FARA_SURSA = new Set(['sanatate', 'productivitate', 'conexiune']);
@@ -1295,9 +1336,51 @@ function filtruCurent() {
   if (!AGENDA_META) return P().filtru;
   return {
     t: 'Zgomot filtrat',
-    s: cuDe(AGENDA_META.citite, 'intrări verificate') + ' · ' + AGENDA_META.aratate + ' ți-au fost arătate',
+    s: cuDe(AGENDA_META.citite, 'intrări verificate') + ' · '
+      + AGENDA_META.aratate + (AGENDA_META.aratate === 1 ? ' ți-a fost arătat' : ' ți-au fost arătate'),
     v: Math.round(AGENDA_META.tacute / Math.max(AGENDA_META.citite, 1) * 100),
   };
+}
+
+/** Fereastra de timp pentru care se cere agenda. Se schimbă din ecranul Acasă. */
+let FEREASTRA = 'saptamana';
+
+const FERESTRE_UI = [
+  { id: 'diseara', t: 'Diseară' },
+  { id: 'maine', t: 'Mâine' },
+  { id: 'weekend', t: 'În weekend' },
+  { id: 'saptamana', t: 'Săptămâna asta' },
+  { id: 'luna', t: 'Luna asta' },
+];
+
+/**
+ * Recalculează agenda pentru profilul curent.
+ *
+ * Două căi, aceeași funcție de scor: dacă rulează serverul local, el o calculează
+ * pe baza vie; dacă nu, motorul e chiar în pagină și lucrează pe instantaneu.
+ * Așa, alegerile schimbă efectiv rezultatele și în varianta de partajat.
+ */
+function reimprospateazaAgenda() {
+  if (typeof window.VIA_AGENDA === 'function') {
+    return Promise.resolve(window.VIA_AGENDA(FEREASTRA)).catch(() => null);
+  }
+  if (window.VIA_MOTOR) {
+    const p = window.VIA.profil();
+    const rez = window.VIA_MOTOR.agenda({
+      fereastra: FEREASTRA,
+      limita: 24,
+      profil: {
+        categorii: p.categorii,
+        artisti: p.artisti,
+        bugetSeara: p.buget,
+        seriLibere: p.seriLibere,
+        istoric: [],
+      },
+    });
+    instaleazaAgenda(rez.carduri, { ...rez, ...window.VIA_MOTOR.instantaneu, intrari: undefined });
+    return Promise.resolve(rez);
+  }
+  return Promise.resolve(null);
 }
 
 function instaleazaAgenda(carduri, meta) {
@@ -1312,9 +1395,12 @@ function instaleazaAgenda(carduri, meta) {
     ...ALERTE_SCRIPT.filter((a) => FARA_SURSA.has(a.cat)).sort(dupaScor),
   );
   state.alerteDeschise = {};
+  // Pentru ecranul de gust din onboarding: cel mai bine punctat lucru de acum.
+  if (AGENDA_META) AGENDA_META.primul = carduri[0] || null;
   // Datele pot ajunge înainte ca omul să treacă de onboarding; atunci le lăsăm
   // în listă și se văd la prima randare a aplicației.
-  if (el('view')) randVedere();
+  // Cifrele apar și în bara din stânga („zgomot filtrat"), deci o redesenăm și pe ea.
+  if (el('view')) { randVedere(); randRail(); }
 }
 
 /* Interesele definite de utilizator, grupate pe categorii.
@@ -1331,12 +1417,14 @@ const INTERESE = {
   oportunitati: [
     { t:'Zboruri către destinații exotice', on:true },
     { t:'City breaks în Europa', on:true },
-    { t:'Concerte rock și metal', on:true, c:['concert', 'festival'] },
-    { t:'Teatru și spectacole', on:true, c:['teatru', 'muzica-clasica'] },
-    { t:'Stand-up și comedie', on:true, c:['stand-up'] },
-    { t:'Filme noi în cinema', on:false, c:['film'] },
-    { t:'Restaurante noi în oraș', on:true, c:['food'] },
-    { t:'Expoziții și muzee', on:true, c:['expozitie', 'cultura', 'atelier'] },
+    { t:'Concerte rock și metal', scurt:'Concerte', on:true, c:['concert', 'festival'] },
+    { t:'Teatru și spectacole', scurt:'Teatru', on:true, c:['teatru', 'muzica-clasica'] },
+    { t:'Stand-up și comedie', scurt:'Stand-up', on:true, c:['stand-up'] },
+    { t:'Filme noi în cinema', scurt:'Filme', on:false, c:['film'] },
+    { t:'Restaurante noi în oraș', scurt:'Restaurante', on:true, c:['food'] },
+    { t:'Expoziții și muzee', scurt:'Expoziții', on:true, c:['expozitie', 'cultura', 'atelier'] },
+    { t:'Ateliere și cursuri scurte', scurt:'Ateliere', on:true, c:['atelier'] },
+    { t:'Petreceri și cluburi', scurt:'Cluburi', on:false, c:['club', 'social'] },
     { t:'Oferte la echipamente foto', on:false },
   ],
   productivitate: [
@@ -1734,10 +1822,10 @@ function randOnb() {
     '<div class="onb-wrap">' +
       '<div class="onb-top">' +
         mark(24) +
-        '<div class="steps">' + [0,1,2].map((i) => '<i class="' + (i <= p ? 'on' : '') + '"></i>').join('') + '</div>' +
+        '<div class="steps">' + PASI_ONB.map((_, i) => '<i class="' + (i <= p ? 'on' : '') + '"></i>').join('') + '</div>' +
         '<button class="ghost-b" data-act="skip">Sari peste →</button>' +
       '</div>' +
-      '<div class="onb-stage">' + [pasSalut, pasAlegere, pasPersonalizare][p]() + '</div>' +
+      '<div class="onb-stage">' + PASI_ONB[p]() + '</div>' +
       randPicioareOnb() +
     '</div>';
   el('onb').innerHTML = html;
@@ -1805,6 +1893,68 @@ function pasAlegere() {
       '</div>' +
       '<div class="pv-act">' +
         butonAudio(sel.salut, { voce: sel.voce, personalitate: sel.pers, stil: sel.ton }, 'Ascultă-l pe ' + sel.nume) +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+/**
+ * Pasul de gust: ce urmărește VIA, cât e o seară pentru tine, când ești liber.
+ * Tot ce se bifează aici intră direct în VIA Relevance Score — de asta ecranul
+ * arată, sub alegeri, câte lucruri trec pragul chiar acum.
+ */
+function pasGust() {
+  const interese = Object.entries(INTERESE).flatMap(([grup, lista]) =>
+    lista.map((it, i) => ({ it, cheie: grup + ':' + i })).filter((x) => x.it.c));
+
+  const a = AGENDA_META;
+
+  return '<div class="onb-step">' +
+    '<div class="pick-head">' +
+      '<div><h2>Ce să urmărească VIA pentru tine<span style="color:var(--accent)">.</span></h2>' +
+      '<p>Din astea se calculează scorul de relevanță. Poți schimba oricând, din Explorează.</p></div>' +
+    '</div>' +
+
+    '<div class="tune" style="grid-template-columns:minmax(0,1fr) minmax(0,320px)">' +
+      '<div>' +
+        '<div class="field"><div class="field-l">' + icon('spark') + 'Mă interesează</div>' +
+          '<div class="opts">' + interese.map((x) =>
+            '<button class="opt" data-gust="' + x.cheie + '" aria-pressed="' + !!x.it.on + '">' +
+            esc(x.it.scurt || x.it.t) + '</button>').join('') + '</div></div>' +
+
+        '<div class="field"><div class="field-l">' + icon('ticket') + 'Cât dau pe o ieșire</div>' +
+          '<div class="opts">' + BUGETE.map((b) =>
+            '<button class="opt" data-buget="' + b.v + '" aria-pressed="' + (GUST.buget === b.v) + '">' +
+            esc(b.t) + '</button>').join('') + '</div>' +
+          '<div style="font-size:12px;color:var(--text-3);margin-top:2px">' +
+          esc((BUGETE.find((b) => b.v === GUST.buget) || BUGETE[1]).s) +
+          ' — ce e mult peste atât primește scor mai mic.</div></div>' +
+
+        '<div class="field"><div class="field-l">' + icon('cal') + 'Serile în care sunt liber</div>' +
+          '<div class="opts">' + ZILE_SCURT.map((z, i) =>
+            '<button class="opt" data-zi="' + i + '" aria-pressed="' + GUST.seriLibere.includes(i) + '" ' +
+            'style="min-width:46px" aria-label="' + ZILE_LUNGI[i] + '">' + z + '</button>').join('') + '</div>' +
+          '<div style="font-size:12px;color:var(--text-3);margin-top:2px">' +
+          'Ce pică într-o seară liberă urcă în clasament.</div></div>' +
+      '</div>' +
+
+      '<div class="tune-card" style="align-items:stretch;text-align:left;gap:10px">' +
+        '<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)">Chiar acum, în București</div>' +
+        (a
+          ? '<div><div style="font-family:var(--font-mono);font-size:40px;font-weight:600;letter-spacing:-.03em;line-height:1">' +
+              a.aratate + '</div>' +
+            '<div style="font-size:13px;color:var(--text-2);margin-top:2px">' +
+              (a.aratate === 1 ? 'lucru trece pragul' : 'lucruri trec pragul') + ' de ' + a.prag + '</div></div>' +
+            '<div style="font-size:12.5px;color:var(--text-3);line-height:1.55;border-top:1px solid var(--line);padding-top:10px">' +
+              'Am verificat ' + a.citite + ', iar ' + a.tacute + ' n-au trecut. Schimbă ceva mai sus și numărul se mișcă.</div>' +
+            (a.primul
+              ? '<div style="border-top:1px solid var(--line);padding-top:10px">' +
+                '<div style="font-size:11px;color:var(--text-3)">Cel mai bine punctat</div>' +
+                '<div style="font-weight:600;font-size:13.5px;margin-top:3px">' + esc(a.primul.t) + '</div>' +
+                '<div style="font-size:12px;color:var(--text-2)">' + esc(a.primul.s) + '</div></div>'
+              : '')
+          : '<div style="font-size:12.5px;color:var(--text-2);line-height:1.55">' +
+            'Aici apare, în timp real, câte lucruri din oraș trec pragul cu alegerile tale.</div>') +
       '</div>' +
     '</div>' +
   '</div>';
@@ -2002,18 +2152,25 @@ function butonAudio(text, over, eticheta) {
     icon('play') + (eticheta ? '<span>' + esc(eticheta) + '</span>' : '') + '</button>';
 }
 
+/** Pașii de onboarding, în ordine. Ultimul duce în aplicație. */
+const PASI_ONB = [pasSalut, pasAlegere, pasPersonalizare, pasGust];
+
 function randPicioareOnb() {
   const p = state.pasOnb;
+  const ultim = PASI_ONB.length - 1;
   const texte = [
     'Poți schimba oricând companionul tău.',
     'Alege pe cine simți că ți se potrivește. Nimic nu e definitiv.',
     'Gata. De acum, Genie vorbește pe limba ta.',
+    'Cu cât îi spui mai mult, cu atât filtrează mai bine.',
   ];
+  const butoane = ['Alege companionul tău', 'Personalizează-l', 'Ce te interesează', 'Hai să începem'];
+
   return '<div class="onb-foot">' +
     (p > 0 ? '<button class="btn sec" data-act="inapoi">' + icon('prev') + 'Înapoi</button>' : '<span class="hint">' + texte[0] + '</span>') +
     (p > 0 ? '<span class="hint">' + texte[p] + '</span>' : '') +
-    '<button class="btn" data-act="' + (p === 2 ? 'start' : 'inainte') + '">' +
-      (p === 2 ? 'Hai să începem' : p === 1 ? 'Personalizează-l' : 'Alege companionul tău') + icon('arrow') + '</button>' +
+    '<button class="btn" data-act="' + (p === ultim ? 'start' : 'inainte') + '">' +
+      butoane[p] + icon('arrow') + '</button>' +
   '</div>';
 }
 
@@ -2041,6 +2198,28 @@ function legaOnb() {
     const ex = camp === 'voce' ? gasesteVoce(val).ex : camp === 'personalitate' ? gasestePers(val).ex : gasesteStil(val).ex;
     Voce.spune(ex, null, undaPornire, undaOprire);
   }));
+  /* Pasul de gust: fiecare apăsare schimbă profilul, recalculează agenda și
+     redesenează pasul, ca numărul din dreapta să se miște sub ochii omului. */
+  const dupaSchimbare = () => { salveazaGust(); reimprospateazaAgenda().then(randOnb); };
+
+  root.querySelectorAll('[data-gust]').forEach((b) => b.addEventListener('click', () => {
+    const [grup, i] = b.dataset.gust.split(':');
+    const it = INTERESE[grup][Number(i)];
+    it.on = !it.on;
+    dupaSchimbare();
+  }));
+  root.querySelectorAll('[data-buget]').forEach((b) => b.addEventListener('click', () => {
+    GUST.buget = Number(b.dataset.buget);
+    dupaSchimbare();
+  }));
+  root.querySelectorAll('[data-zi]').forEach((b) => b.addEventListener('click', () => {
+    const z = Number(b.dataset.zi);
+    GUST.seriLibere = GUST.seriLibere.includes(z)
+      ? GUST.seriLibere.filter((x) => x !== z)
+      : [...GUST.seriLibere, z].sort();
+    dupaSchimbare();
+  }));
+
   const inp = el('numeGenie');
   if (inp) inp.addEventListener('input', () => {
     state.genie.nume = inp.value.trim() || 'Genie';
@@ -2336,6 +2515,9 @@ window.VIA = {
 
   /* Datele reale intră prin aici. */
   agenda: instaleazaAgenda,
+
+  /* Motorul din pagină anunță că e gata; de aici încolo recalculăm local. */
+  motorPornit: () => { reimprospateazaAgenda().then(() => { if (el('onb') && !state.onboardat) randOnb(); }); },
 };
 
 function trimiteMesaj(text) {
@@ -2451,6 +2633,12 @@ function vAcasa() {
             (AGENDA_META ? esc(AGENDA_META.eticheta || 'date reale · București')
               : esc(cat.t) + ' · ' + esc(state.genie.nume)) +
           '</span></div>' +
+
+        (AGENDA_META
+          ? '<div class="tabs" style="margin-top:-8px">' + FERESTRE_UI.map((f) =>
+              '<button class="tab" data-fereastra="' + f.id + '" aria-pressed="' + (FEREASTRA === f.id) + '">' +
+              esc(f.t) + '</button>').join('') + '</div>'
+          : '') +
         '<div style="display:flex;flex-direction:column;gap:10px">' +
           recomandate.map((a) => randAlerta(a, ALERTE.indexOf(a))).join('') +
         '</div>' +
@@ -2953,9 +3141,27 @@ function legaVedere() {
     const [k, i] = b.dataset.interes.split(':');
     const it = INTERESE[k][+i];
     it.on = !it.on;
+    salveazaGust();
     randVedere();
+
+    // Interesele legate de date schimbă efectiv agenda, nu doar bifa.
+    if (it.c) {
+      reimprospateazaAgenda().then((rez) => {
+        if (!rez) return;
+        toast(it.on ? 'VIA urmărește: ' + it.t : 'Oprit: ' + it.t,
+          rez.aratate + (rez.aratate === 1 ? ' lucru trece' : ' lucruri trec') + ' pragul acum, din ' + rez.citite + ' verificate.');
+      });
+      return;
+    }
+
     toast(it.on ? 'VIA urmărește: ' + it.t : 'Oprit: ' + it.t,
       it.on ? 'Primești alerte când apare ceva relevant.' : 'Nu mai primești alerte pe subiectul ăsta.');
+  }));
+
+  v.querySelectorAll('[data-fereastra]').forEach((b) => b.addEventListener('click', () => {
+    FEREASTRA = b.dataset.fereastra;
+    randVedere();
+    reimprospateazaAgenda();
   }));
 
   v.querySelectorAll('[data-set]').forEach((b) => b.addEventListener('click', () => {
@@ -3076,6 +3282,7 @@ document.addEventListener('click', (e) => {
 });
 
 /* pornire */
+incarcaGust();
 setPersona('dark', false);
 aplicaCompanion(PERSONAS.dark.genieImplicit, false);
 randOnb();
@@ -3084,14 +3291,617 @@ randOnb();
 </script>
 
 <script>
-/* Agenda reală din București, fotografiată pe 13 septembrie.
-   Prototipul rămâne un singur fișier: datele sunt aici, nu într-un API. */
+/* VIA — motorul de relevanță și datele reale din București, de pe 13 septembrie.
+   Pagina rămâne un singur fișier, dar scorurile NU sunt precalculate: se recalculează
+   aici, în browser, de fiecare dată când se schimbă profilul sau fereastra de timp. */
 (function () {
-  var date = {"fereastra":"luna","prag":70,"citite":80,"aratate":24,"tacute":53,"generatLa":"2026-09-13T15:19:24.582Z","carduri":[{"id":2,"cat":"oportunitati","ic":"music","art":"concert","scor":84,"noua":false,"cand":"verificat 13 septembrie","t":"Cargo - Te Chem","s":"vin., 18 septembrie, 16:00 · Arenele Romane","pill":"Artist pe care îl urmărești","bun":true,"de":"Cargo e pe lista artiștilor pe care îi urmărești. E vineri, când de obicei ești liber. Costă 69 lei, bine sub bugetul tău obișnuit de 150.","detalii":[["Locație","Arenele Romane"],["Adresă","Str. Cutitul de Argint 26"],["Începe","vin., 18 septembrie, 16:00"],["Preț","69–184 lei"],["Confirmat de","1 sursă"]],"url":"https://get-in.ro/eveniment/concert-cargo-te-chem-arenele-romane-18-septembrie-2026/","categorie":"concert","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":100,"pondere":0.18,"contributie":18,"incert":false},"pret":{"valoare":90,"pondere":0.16,"contributie":14,"incert":false},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":13,"cat":"oportunitati","ic":"music","art":"concert","scor":81,"noua":false,"cand":"verificat 13 septembrie","t":"Holy Fuck","s":"sâm., 10 octombrie, 20:00 · Club Control","pill":"50% sub bugetul tău","bun":true,"de":"Ai spus că te interesează concertele. E sâmbătă seara, când de obicei ești liber. Costă 75 lei, bine sub bugetul tău obișnuit de 150.","detalii":[["Locație","Club Control"],["Adresă","Str. Constantin Mille, nr. 4, București"],["Începe","sâm., 10 octombrie, 20:00"],["Preț","de la 75 lei"],["Confirmat de","1 sursă"]],"url":"https://eventbook.ro/music/bilete-ctrl-live-holy-fuck","categorie":"concert","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":90,"pondere":0.16,"contributie":14,"incert":false},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":107,"cat":"cultura","ic":"palette","art":"muzeu","scor":78,"noua":false,"cand":"verificat 13 septembrie","t":"Care este stilul tău? Ghid de descoperire în design interior | Fundația Calea Victoriei","s":"joi, 17 septembrie, 19:00 · Casa General Henri Cihoschi","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează atelierele. E joi seara, când de obicei ești liber. E o singură reprezentație, nu se repetă.","detalii":[["Locație","Casa General Henri Cihoschi"],["Adresă","Bulevardul Dacia 78, București 030167"],["Începe","joi, 17 septembrie, 19:00"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/care-este-stilul-tau-design-interior/","categorie":"atelier","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":100,"pondere":0.18,"contributie":18,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":4,"cat":"oportunitati","ic":"music","art":"festival","scor":78,"noua":false,"cand":"verificat 13 septembrie","t":"No Ledge Fest","s":"sâm., 19 septembrie, 10:00 · Sala Palatului","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează festivalurile. E sâmbătă, când de obicei ești liber. E o singură reprezentație, nu se repetă.","detalii":[["Locație","Sala Palatului"],["Adresă","Strada Ion Campineanu Nr. 28"],["Începe","sâm., 19 septembrie, 10:00"],["Confirmat de","1 sursă"]],"url":"https://www.entertix.ro/evenimente/34335/no-ledge-fest-2026-19-septembrie-2026-sala-palatului-bucuresti.html","categorie":"festival","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":100,"pondere":0.18,"contributie":18,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":7,"cat":"oportunitati","ic":"music","art":"festival","scor":78,"noua":false,"cand":"verificat 13 septembrie","t":"Slow Coffee Festival – Ediția Aniversară #10","s":"vin., 25 septembrie – dum., 27 septembrie · Romexpo","pill":"75% sub bugetul tău","bun":true,"de":"Ai spus că te interesează festivalurile. Costă 37 lei, bine sub bugetul tău obișnuit de 150. Prinzi o vineri liberă până se termină.","detalii":[["Locație","Romexpo"],["Adresă","Bulevardul Mărăști 65-67"],["Începe","vin., 25 septembrie, 20:00"],["Până la","dum., 27 septembrie"],["Preț","de la 37 lei"],["Confirmat de","1 sursă"]],"url":"https://www.iabilet.ro/bilete-slow-coffee-festival-editia-aniversara-10-117138/","categorie":"festival","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":100,"pondere":0.16,"contributie":16,"incert":false},"unicitate":{"valoare":62,"pondere":0.14,"contributie":9,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":104,"cat":"cultura","ic":"palette","art":"muzeu","scor":75,"noua":false,"cand":"verificat 13 septembrie","t":"Boema nebună din Montmartre şi Montparnasse | Fundația Calea Victoriei","s":"joi, 17 septembrie, 19:00 · Casa General Henri Cihoschi","pill":"Potrivit cu profilul tău","bun":false,"de":"Ai spus că te interesează atelierele. E joi seara, când de obicei ești liber. Are 2 reprezentații în perioada asta.","detalii":[["Locație","Casa General Henri Cihoschi"],["Adresă","Bulevardul Dacia 78, București 030167"],["Începe","joi, 17 septembrie, 19:00"],["Reprezentații","2"],["Confirmat de","1 sursă"],["Alte apariții","1"]],"url":"https://zilesinopti.ro/evenimente/boema-nebuna-din-montmartre-2/","categorie":"atelier","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":100,"pondere":0.18,"contributie":18,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":70,"pondere":0.14,"contributie":10,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":50,"cat":"oportunitati","ic":"music","art":"concert","scor":75,"noua":false,"cand":"verificat 13 septembrie","t":"Manifest Editorial","s":"vin., 25 septembrie, 17:00 · Oclu","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează concertele. E vineri seara, când de obicei ești liber. E o singură reprezentație, nu se repetă.","detalii":[["Locație","Oclu"],["Adresă","București"],["Începe","vin., 25 septembrie, 17:00"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/manifest-editorial-oclu/","categorie":"concert","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":62,"cat":"cultura","ic":"palette","art":"teatru","scor":75,"noua":false,"cand":"verificat 13 septembrie","t":"E vina ta! (Tomi Cristin)","s":"vin., 25 septembrie, 19:00 · Teatrul Național Ion Luca Caragiale – Sala Atelier","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează teatrul. E vineri seara, când de obicei ești liber. E o singură reprezentație, nu se repetă.","detalii":[["Locație","Teatrul Național Ion Luca Caragiale – Sala Atelier"],["Adresă","Bulevardul Nicolae Bălcescu nr. 2, București"],["Începe","vin., 25 septembrie, 19:00"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/e-vina-ta-tomi-cristin-tnb/","categorie":"teatru","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":67,"cat":"cultura","ic":"palette","art":"teatru","scor":75,"noua":false,"cand":"verificat 13 septembrie","t":"Divorț în ziua nunții","s":"sâm., 26 septembrie, 16:30 · Teatrul Roșu","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează teatrul. E sâmbătă, când de obicei ești liber. E o singură reprezentație, nu se repetă.","detalii":[["Locație","Teatrul Roșu"],["Adresă","Strada Bărăției nr. 31, București"],["Începe","sâm., 26 septembrie, 16:30"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/divort-in-ziua-nuntii-teatrul-rosu/","categorie":"teatru","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":9,"cat":"cultura","ic":"palette","art":"arta","scor":75,"noua":false,"cand":"verificat 13 septembrie","t":"Vivaldi + Da Vinci","s":"sâm., 03 octombrie, 20:00 · MINA Museum","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează expozițiile. E sâmbătă seara, când de obicei ești liber. E o singură reprezentație, nu se repetă.","detalii":[["Locație","MINA Museum"],["Adresă","George Constantinescu 2 – 4"],["Începe","sâm., 03 octombrie, 20:00"],["Confirmat de","1 sursă"]],"url":"https://www.entertix.ro/evenimente/34338/vivaldi-da-vinci-3-jan-3-oct-2026-mina-museum-bucuresti.html","categorie":"expozitie","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":11,"cat":"oportunitati","ic":"music","art":"festival","scor":75,"noua":false,"cand":"verificat 13 septembrie","t":"ROWINE Autumn Edition Bucharest 2026","s":"vin., 09 octombrie – dum., 11 octombrie · Fratelli Studios","pill":"Îți alegi tu ziua","bun":false,"de":"Ai spus că te interesează festivalurile. Prinzi o vineri liberă până se termină. Costă 110 lei, cât ai de obicei pentru o seară.","detalii":[["Locație","Fratelli Studios"],["Adresă","Strada Glodeni 1-3"],["Începe","vin., 09 octombrie, 14:00"],["Până la","dum., 11 octombrie"],["Preț","de la 110 lei"],["Confirmat de","1 sursă"]],"url":"https://www.bilete.ro/ro-wine/rowine-autumn-edition-bucharest-2026-09-11-oct-2026/","categorie":"festival","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":78,"pondere":0.16,"contributie":12,"incert":false},"unicitate":{"valoare":62,"pondere":0.14,"contributie":9,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":89,"cat":"oportunitati","ic":"music","art":"festival","scor":74,"noua":false,"cand":"verificat 13 septembrie","t":"Bucharest Feminist Film Festival 2026","s":"joi, 17 septembrie – dum., 20 septembrie · Cinema Muzeul Țăranului Român","pill":"Îți alegi tu ziua","bun":false,"de":"Ai spus că te interesează festivalurile. Prinzi o joi liberă până se termină. Ține mai multe zile, îți alegi tu momentul.","detalii":[["Locație","Cinema Muzeul Țăranului Român"],["Adresă","Strada Monetăriei nr 3, București"],["Începe","joi, 17 septembrie, 19:00"],["Până la","dum., 20 septembrie"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/bucharest-feminist-film-festival-2026/","categorie":"festival","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":100,"pondere":0.18,"contributie":18,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":62,"pondere":0.14,"contributie":9,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":6,"cat":"oportunitati","ic":"music","art":"concert","scor":74,"noua":false,"cand":"verificat 13 septembrie","t":"Adrian Minune - Concert Aniversar","s":"joi, 24 septembrie, 20:00 · Beraria H","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează concertele. E joi seara, când de obicei ești liber. E o singură reprezentație, nu se repetă.","detalii":[["Locație","Beraria H"],["Adresă","Kiseleff 32, Parc Herastrau, (fostul Pavilion H), 011343 București, TEL: +40 725.345.345"],["Începe","joi, 24 septembrie, 20:00"],["Preț","200–400 lei"],["Confirmat de","1 sursă"]],"url":"https://www.yellowtickets.ro/bilete/concert-adrian-minune-52-bucuresti-2026","categorie":"concert","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":45,"pondere":0.16,"contributie":7,"incert":false},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":87,"cat":"oportunitati","ic":"music","art":"festival","scor":73,"noua":false,"cand":"verificat 13 septembrie","t":"George Enescu Festival 2026","s":"joi, 10 septembrie – sâm., 19 septembrie · Ateneul Român","pill":"Îți alegi tu ziua","bun":false,"de":"Ai spus că te interesează festivalurile. Prinzi o joi liberă până se termină. Ține mai multe zile, îți alegi tu momentul.","detalii":[["Locație","Ateneul Român"],["Adresă","Strada Benjamin Franklin Nr. 1-3, București"],["Începe","joi, 10 septembrie, 09:00"],["Până la","sâm., 19 septembrie"],["Confirmat de","1 sursă"],["Alte apariții","1"]],"url":"https://zilesinopti.ro/evenimente/george-enescu-festival-2026/","categorie":"festival","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":95,"pondere":0.18,"contributie":17,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":62,"pondere":0.14,"contributie":9,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":83,"cat":"cultura","ic":"palette","art":"arta","scor":73,"noua":false,"cand":"verificat 13 septembrie","t":"Late Summer Spritz","s":"joi, 10 septembrie – dum., 15 noiembrie · MARe/Muzeul de Arta Recenta","pill":"Îți alegi tu ziua","bun":false,"de":"Ai spus că te interesează expozițiile. Prinzi o joi liberă până se termină. Ține mai multe zile, îți alegi tu momentul.","detalii":[["Locație","MARe/Muzeul de Arta Recenta"],["Adresă","Bulevardul Primaverii 15"],["Începe","joi, 10 septembrie, 11:00"],["Până la","dum., 15 noiembrie"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/late-summer-spritz-mare/","categorie":"expozitie","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":95,"pondere":0.18,"contributie":17,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":62,"pondere":0.14,"contributie":9,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":84,"cat":"cultura","ic":"palette","art":"arta","scor":73,"noua":false,"cand":"verificat 13 septembrie","t":"Photographs by Constantin Brâncuși","s":"joi, 10 septembrie – dum., 27 septembrie · MARe/Muzeul de Arta Recenta","pill":"Îți alegi tu ziua","bun":false,"de":"Ai spus că te interesează expozițiile. Prinzi o joi liberă până se termină. Ține mai multe zile, îți alegi tu momentul.","detalii":[["Locație","MARe/Muzeul de Arta Recenta"],["Adresă","Bulevardul Primaverii 15"],["Începe","joi, 10 septembrie, 11:00"],["Până la","dum., 27 septembrie"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/photographs-by-constantin-brancusi/","categorie":"expozitie","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":95,"pondere":0.18,"contributie":17,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":62,"pondere":0.14,"contributie":9,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":86,"cat":"cultura","ic":"palette","art":"arta","scor":73,"noua":false,"cand":"verificat 13 septembrie","t":"Expoziţie inovativă cu bunuri restaurate din colecţia Muzeului TNB","s":"joi, 10 septembrie – vin., 25 septembrie · Teatrul Național Ion Luca Caragiale București","pill":"Îți alegi tu ziua","bun":false,"de":"Ai spus că te interesează expozițiile. Prinzi o joi liberă până se termină. Ține mai multe zile, îți alegi tu momentul.","detalii":[["Locație","Teatrul Național Ion Luca Caragiale București"],["Adresă","Bulevardul Nicolae Bălcescu nr. 2, București"],["Începe","joi, 10 septembrie, 15:00"],["Până la","vin., 25 septembrie"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/expozitie-inovativa-cu-bunuri-restaurate-din-colectia-muzeului-tnb-2/","categorie":"expozitie","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":95,"pondere":0.18,"contributie":17,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":62,"pondere":0.14,"contributie":9,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":1,"cat":"oportunitati","ic":"music","art":"concert","scor":73,"noua":false,"cand":"verificat 13 septembrie","t":"Rock Sympho Show IV","s":"mie., 16 septembrie, 19:30 · Sala Palatului","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează concertele. E o singură reprezentație, nu se repetă.","detalii":[["Locație","Sala Palatului"],["Adresă","Strada Ion Campineanu Nr. 28"],["Începe","mie., 16 septembrie, 19:30"],["Confirmat de","1 sursă"]],"url":"https://www.entertix.ro/evenimente/37012/rock-symphony-show-16-septembrie-2026-sala-palatului-bucuresti.html","categorie":"concert","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":69,"pondere":0.18,"contributie":12,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":3,"cat":"cultura","ic":"music","art":"concert","scor":73,"noua":false,"cand":"verificat 13 septembrie","t":"David Garrett","s":"vin., 18 septembrie, 20:00 · Sala Palatului","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează muzica clasică. E vineri seara, când de obicei ești liber. E o singură reprezentație, nu se repetă.","detalii":[["Locație","Sala Palatului"],["Adresă","Strada Ion Campineanu Nr. 28"],["Începe","vin., 18 septembrie, 20:00"],["Preț","de la 254 lei"],["Confirmat de","1 sursă"]],"url":"https://www.eventim.ro/event/david-garrett-sala-palatului-21075870/","categorie":"muzica-clasica","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":100,"pondere":0.18,"contributie":18,"incert":false},"pret":{"valoare":20,"pondere":0.16,"contributie":3,"incert":false},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":98,"cat":"cultura","ic":"palette","art":"muzeu","scor":72,"noua":false,"cand":"verificat 13 septembrie","t":"Atelier de scenaristică: meşteşug sau inspiraţie? | Fundația Calea Victoriei","s":"joi, 17 septembrie, 19:00 · Casa General Henri Cihoschi","pill":"Potrivit cu profilul tău","bun":false,"de":"Ai spus că te interesează atelierele. E joi seara, când de obicei ești liber. Are 4 reprezentații în perioada asta.","detalii":[["Locație","Casa General Henri Cihoschi"],["Adresă","Bulevardul Dacia 78, București 030167"],["Începe","joi, 17 septembrie, 19:00"],["Reprezentații","4"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/atelier-de-scenaristica-mestesug/","categorie":"atelier","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":100,"pondere":0.18,"contributie":18,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":50,"pondere":0.14,"contributie":7,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":90,"cat":"oportunitati","ic":"music","art":"festival","scor":71,"noua":false,"cand":"verificat 13 septembrie","t":"Bucharest International Experimental Film Festival BIEFF 2026","s":"mie., 23 septembrie – lun., 28 septembrie · Cinema Elvire Popesco","pill":"Îți alegi tu ziua","bun":false,"de":"Ai spus că te interesează festivalurile. Prinzi o joi liberă până se termină. Ține mai multe zile, îți alegi tu momentul.","detalii":[["Locație","Cinema Elvire Popesco"],["Adresă","Bulevardul Dacia nr. 77, București"],["Începe","mie., 23 septembrie, 19:00"],["Până la","lun., 28 septembrie"],["Reprezentații","2"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/bucharest-international-experimental-film-festival-bieff-2026/","categorie":"festival","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":62,"pondere":0.14,"contributie":9,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":12,"cat":"oportunitati","ic":"music","art":"festival","scor":71,"noua":false,"cand":"verificat 13 septembrie","t":"RoWine Autumn Edition","s":"vin., 09 octombrie – dum., 11 octombrie · Fratelli Studio 1","pill":"Îți alegi tu ziua","bun":false,"de":"Ai spus că te interesează festivalurile. Prinzi o vineri liberă până se termină. Ține mai multe zile, îți alegi tu momentul.","detalii":[["Locație","Fratelli Studio 1"],["Adresă","Strada Glodeni 1-3"],["Începe","vin., 09 octombrie, 14:00"],["Până la","dum., 11 octombrie"],["Confirmat de","1 sursă"]],"url":"https://www.entertix.ro/evenimente/34296/rowine-autumn-edition-bucharest-2026-09-11-oct-9-11-octombrie-2026-fratelli-studio-1-bucuresti.html","categorie":"festival","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":84,"pondere":0.18,"contributie":15,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":62,"pondere":0.14,"contributie":9,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":69,"cat":"cultura","ic":"palette","art":"teatru","scor":70,"noua":false,"cand":"verificat 13 septembrie","t":"Frumosul și Bestiile","s":"mie., 23 septembrie, 20:00 · FF Theatre","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează teatrul. E o singură reprezentație, nu se repetă.","detalii":[["Locație","FF Theatre"],["Adresă","Strada Smârdan nr. 5, București"],["Începe","mie., 23 septembrie, 20:00"],["Confirmat de","1 sursă"]],"url":"https://zilesinopti.ro/evenimente/frumosul-si-bestiile-ff-theatre/","categorie":"teatru","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":52,"pondere":0.18,"contributie":9,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}},{"id":8,"cat":"cultura","ic":"palette","art":"arta","scor":70,"noua":false,"cand":"verificat 13 septembrie","t":"Bernard Frize & Photographs by Constantin Brâncuși","s":"dum., 27 septembrie, 20:00 · MARe/Muzeul de Arta Recenta","pill":"O singură reprezentație","bun":false,"de":"Ai spus că te interesează expozițiile. E o singură reprezentație, nu se repetă.","detalii":[["Locație","MARe/Muzeul de Arta Recenta"],["Adresă","Bulevardul Primaverii 15"],["Începe","dum., 27 septembrie, 20:00"],["Confirmat de","1 sursă"]],"url":"https://www.entertix.ro/evenimente/37872/bernard-frize-photographs-by-constantin-brncui-4-may-27-sep-2026-mare-muzeul-de-arta-recenta-bucuresti.html","categorie":"expozitie","straturi":{"context":{"valoare":100,"pondere":0.24,"contributie":24,"incert":false},"invatate":{"valoare":50,"pondere":0.18,"contributie":9,"incert":true},"moment":{"valoare":52,"pondere":0.18,"contributie":9,"incert":false},"pret":{"valoare":55,"pondere":0.16,"contributie":9,"incert":true},"unicitate":{"valoare":92,"pondere":0.14,"contributie":13,"incert":false},"reputatie":{"valoare":55,"pondere":0.1,"contributie":6,"incert":false}}}],"instantaneu":"13 septembrie","eticheta":"date reale · 13 septembrie","profil":{"oras":"București","categorii":["concert","festival","muzica-clasica","teatru","stand-up","expozitie","cultura","atelier","food"],"artisti":["Cargo","Coma","Metallica"],"bugetSeara":150,"moneda":"RON","seriLibere":[4,5,6],"istoric":[]}};
-  function pune() {
-    if (window.VIA && typeof window.VIA.agenda === 'function') {
-      window.VIA.agenda(date.carduri, date);
+  var M_scor = (function () {
+/**
+ * VIA Relevance Score™ — scorul de relevanță, calculat pentru un om anume.
+ *
+ * Nu e un rating public. Aceeași intrare primește scoruri diferite pentru oameni
+ * diferiți, iar scorul vine întotdeauna cu motivul lui în limbaj natural.
+ *
+ * Șase straturi, fiecare între 0 și 1, combinate cu ponderile din PONDERI:
+ *   1. context personal        — se potrivește cu ce a spus că îl interesează
+ *   2. preferințe învățate     — ce a plăcut și ce nu, din istoric
+ *   3. momentul potrivit       — e liber atunci, are timp să se organizeze
+ *   4. valoare și preț         — cât costă față de bugetul lui obișnuit
+ *   5. unicitatea experienței  — se întâmplă o dată sau e în fiecare seară
+ *   6. reputație și confirmare — câte surse o confirmă, cât de bine știm locul
+ *
+ * Sub PRAG_MINIM nu se arată nimic: mai bine tăcere decât o notificare slabă.
+ */
+
+const PONDERI = {
+  context: 0.24,
+  invatate: 0.18,
+  moment: 0.18,
+  pret: 0.16,
+  unicitate: 0.14,
+  reputatie: 0.10,
+};
+
+const PRAG_MINIM = 70;
+
+/** Profilul implicit, cât să putem calcula ceva înainte de onboarding real. */
+const PROFIL_IMPLICIT = {
+  oras: 'București',
+  categorii: ['concert', 'teatru', 'expozitie', 'stand-up', 'festival', 'film'],
+  artisti: [],
+  bugetSeara: 150,
+  moneda: 'RON',
+  seriLibere: [4, 5, 6],            // joi, vineri, sâmbătă (0 = duminică)
+  istoric: [],
+};
+
+/** Categorii vecine: dacă urmărește una, cealaltă i se potrivește pe jumătate. */
+const RUDE = {
+  concert: ['festival', 'muzica-clasica', 'club'],
+  festival: ['concert', 'teatru', 'film'],
+  'muzica-clasica': ['concert', 'teatru'],
+  teatru: ['stand-up', 'muzica-clasica'],
+  'stand-up': ['teatru', 'club'],
+  expozitie: ['cultura', 'atelier'],
+  atelier: ['expozitie', 'cultura'],
+  film: ['festival'],
+  club: ['concert', 'social'],
+  social: ['club'],
+};
+
+const ORA = 3600e3;
+const ZI = 24 * ORA;
+
+const intre = (x, jos, sus) => Math.max(jos, Math.min(sus, x));
+
+/** Ziua săptămânii în București: 0 = duminică. */
+function ziSaptamanii(iso) {
+  const nume = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Bucharest', weekday: 'short' }).format(new Date(iso));
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(nume);
+}
+
+function textNormalizat(s) {
+  return String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+function listaJson(s) {
+  if (!s) return [];
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? v.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+/* ---------- stratul 1: context personal ---------- */
+
+function stratContext(intrare, profil) {
+  const cat = intrare.categorie || 'eveniment';
+  const urmarite = new Set(profil.categorii || []);
+
+  // Un artist urmărit bate orice altă potrivire de categorie.
+  const unde = textNormalizat(intrare.titlu + ' ' + (intrare.titlu_alt || '') + ' ' + listaJson(intrare.artisti).join(' '));
+  const artist = (profil.artisti || []).find((a) => a && unde.includes(textNormalizat(a)));
+  if (artist) return { valoare: 1, fapt: { fel: 'artist', artist } };
+
+  if (urmarite.has(cat)) return { valoare: 1, fapt: { fel: 'categorie', categorie: cat } };
+
+  const vecina = (RUDE[cat] || []).find((r) => urmarite.has(r));
+  if (vecina) return { valoare: 0.55, fapt: { fel: 'vecina', categorie: cat, vecina } };
+
+  return { valoare: 0.15, fapt: null };
+}
+
+/* ---------- stratul 2: preferințe învățate ---------- */
+
+function stratInvatate(intrare, profil) {
+  const istoric = profil.istoric || [];
+  if (!istoric.length) return { valoare: 0.5, fapt: null, incert: true };
+
+  const potriviri = istoric.filter((h) =>
+    (h.categorie && h.categorie === intrare.categorie) ||
+    (h.locatie && intrare.locatie_nume && textNormalizat(h.locatie) === textNormalizat(intrare.locatie_nume)));
+
+  if (!potriviri.length) return { valoare: 0.5, fapt: null, incert: true };
+
+  // verdict: 1 = i-a plăcut, -1 = nu. Media trece din [-1, 1] în [0, 1].
+  const media = potriviri.reduce((s, h) => s + (Number(h.verdict) || 0), 0) / potriviri.length;
+  const plus = potriviri.filter((h) => Number(h.verdict) > 0).length;
+  return {
+    valoare: intre((media + 1) / 2, 0.05, 1),
+    fapt: { fel: 'istoric', din: potriviri.length, plus, categorie: intrare.categorie },
+  };
+}
+
+/* ---------- stratul 3: momentul potrivit ---------- */
+
+function stratMoment(intrare, profil, acum, orizont) {
+  const start = intrare.start ? Date.parse(intrare.start) : null;
+  const sfarsit = intrare.sfarsit ? Date.parse(intrare.sfarsit) : start;
+  if (!start) return { valoare: 0.5, fapt: null, incert: true };
+
+  const libere = new Set(profil.seriLibere || []);
+  const continuu = sfarsit && sfarsit - start > 36 * ORA;
+
+  // La ceva care ține mai multe zile e destul ca una din serile libere să cadă în interval.
+  // Căutăm numai până la orizontul întrebării: dacă omul întreabă „ce fac diseară",
+  // o joi liberă de săptămâna viitoare nu e un motiv.
+  let ziLibera = 0.3;
+  let ziuaBuna = null;
+  if (continuu) {
+    const pana = Math.min(sfarsit, orizont ?? sfarsit);
+    for (let t = Math.max(start, acum); t <= pana; t += ZI) {
+      const z = ziSaptamanii(new Date(t).toISOString());
+      if (libere.has(z)) { ziLibera = 1; ziuaBuna = z; break; }
     }
+  } else if (libere.has(ziSaptamanii(intrare.start))) {
+    ziLibera = 1;
+    ziuaBuna = ziSaptamanii(intrare.start);
+  }
+
+  // „Seara" doar dacă e chiar seara: un eveniment de la 16:00 nu e o seară liberă.
+  const oraLocala = Number(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Bucharest', hour: '2-digit', hour12: false,
+  }).format(new Date(start)));
+
+  const ore = (start - acum) / ORA;
+  let proximitate;
+  if (ore < 0) proximitate = continuu ? 0.9 : 0.1;      // a început deja
+  else if (ore < 3) proximitate = 0.35;                 // prea târziu ca să se organizeze
+  else if (ore < 24 * 7) proximitate = 1;
+  else if (ore < 24 * 30) proximitate = 0.7;
+  else proximitate = 0.45;
+
+  // Ce se închide în câteva zile devine urgent, oricât de departe ar fi început.
+  const zileRamase = sfarsit ? (sfarsit - acum) / ZI : null;
+  const seIncheie = continuu && zileRamase !== null && zileRamase <= 5 && zileRamase > 0;
+  if (seIncheie) proximitate = 1;
+
+  return {
+    valoare: intre(ziLibera * 0.45 + proximitate * 0.55, 0, 1),
+    fapt: {
+      fel: 'moment', ziuaBuna, ore, continuu, seara: oraLocala >= 17,
+      zileRamase: zileRamase === null ? null : Math.ceil(zileRamase),
+      seIncheie,
+    },
+  };
+}
+
+/* ---------- stratul 4: valoare și preț ---------- */
+
+function stratPret(intrare, profil) {
+  const buget = Number(profil.bugetSeara) || 150;
+  const pret = intrare.pret_min === null || intrare.pret_min === undefined ? null : Number(intrare.pret_min);
+
+  if (pret === null) return { valoare: 0.55, fapt: null, incert: true };
+  if (pret === 0) return { valoare: 1, fapt: { fel: 'gratuit' } };
+
+  const raport = pret / buget;
+  let valoare;
+  if (raport <= 0.4) valoare = 1;
+  else if (raport <= 0.7) valoare = 0.9;
+  else if (raport <= 1) valoare = 0.78;
+  else if (raport <= 1.5) valoare = 0.45;
+  else if (raport <= 2.5) valoare = 0.2;
+  else valoare = 0.08;
+
+  return { valoare, fapt: { fel: 'pret', pret, buget, raport, moneda: intrare.moneda || profil.moneda } };
+}
+
+/* ---------- stratul 5: unicitatea experienței ---------- */
+
+function stratUnicitate(intrare) {
+  // Ce am scris noi în baza proprie e, prin definiție, ce nu găsești în altă parte.
+  if (intrare.manuala) return { valoare: 0.9, fapt: { fel: 'proprie' } };
+
+  if (intrare.tip === 'film') {
+    const p = Number(intrare.proiectii) || 0;
+    const valoare = p >= 150 ? 0.16 : p >= 60 ? 0.28 : p >= 20 ? 0.42 : 0.6;
+    return { valoare, fapt: { fel: 'film', proiectii: p, cinematografe: Number(intrare.cinematografe) || 0 } };
+  }
+
+  const sfarsit = intrare.sfarsit ? Date.parse(intrare.sfarsit) : null;
+  const start = intrare.start ? Date.parse(intrare.start) : null;
+  if (sfarsit && start && sfarsit - start > 36 * ORA) {
+    return { valoare: 0.62, fapt: { fel: 'continuu' } };
+  }
+
+  const reprezentatii = Number(intrare.reprezentatii) || 1;
+  const valoare = reprezentatii <= 1 ? 0.92 : reprezentatii <= 3 ? 0.7 : reprezentatii <= 8 ? 0.5 : 0.32;
+  return { valoare, fapt: { fel: 'reprezentatii', reprezentatii } };
+}
+
+/* ---------- stratul 6: reputație și confirmare ---------- */
+
+function stratReputatie(intrare) {
+  const surse = Number(intrare.surse) || 0;
+  if (surse > 1) return { valoare: 1, fapt: { fel: 'surse', surse } };
+  if (intrare.locatie_adresa && intrare.locatie_program) return { valoare: 0.72, fapt: { fel: 'locCunoscut' } };
+  if (intrare.locatie_nume) return { valoare: 0.55, fapt: null };
+  return { valoare: 0.3, fapt: null };
+}
+
+/* ---------- explicația ---------- */
+
+const ZILE = ['duminică', 'luni', 'marți', 'miercuri', 'joi', 'vineri', 'sâmbătă'];
+
+const NUME_CATEGORII = {
+  concert: 'concertele', teatru: 'teatrul', 'stand-up': 'stand-up-ul', expozitie: 'expozițiile',
+  festival: 'festivalurile', film: 'filmele', atelier: 'atelierele', club: 'ieșirile în club',
+  'muzica-clasica': 'muzica clasică', social: 'evenimentele sociale', cultura: 'evenimentele culturale',
+};
+
+const numeCat = (c) => NUME_CATEGORII[c] || 'evenimentele de genul ăsta';
+
+/** O propoziție pentru fiecare strat care are ceva concret de spus. */
+function propozitie(cheie, fapt, intrare) {
+  if (!fapt) return null;
+  switch (fapt.fel) {
+    case 'artist':
+      return fapt.artist + ' e pe lista artiștilor pe care îi urmărești.';
+    case 'categorie':
+      return 'Ai spus că te interesează ' + numeCat(fapt.categorie) + '.';
+    case 'vecina':
+      return 'E aproape de ' + numeCat(fapt.vecina) + ', pe care le urmărești.';
+    case 'istoric':
+      return fapt.plus + ' din ' + fapt.din + (fapt.din === 1 ? ' ieșire' : ' ieșiri')
+        + ' de genul ăsta ți-au plăcut.';
+    case 'moment': {
+      const bucati = [];
+      if (fapt.seIncheie) {
+        bucati.push(fapt.zileRamase <= 1 ? 'Se închide mâine.' : 'Se închide în ' + fapt.zileRamase + ' zile.');
+      }
+      if (fapt.ziuaBuna !== null && fapt.ziuaBuna !== undefined) {
+        bucati.push(fapt.continuu
+          ? 'Prinzi o ' + ZILE[fapt.ziuaBuna] + ' liberă până se termină.'
+          : 'E ' + ZILE[fapt.ziuaBuna] + (fapt.seara ? ' seara' : '') + ', când de obicei ești liber.');
+      }
+      return bucati.join(' ') || null;
+    }
+    case 'gratuit':
+      return 'Intrarea e liberă.';
+    case 'pret': {
+      const m = fapt.moneda === 'RON' ? 'lei' : fapt.moneda || 'lei';
+      if (fapt.raport <= 0.7) {
+        return 'Costă ' + Math.round(fapt.pret) + ' ' + m + ', bine sub bugetul tău obișnuit de ' + fapt.buget + '.';
+      }
+      if (fapt.raport <= 1) return 'Costă ' + Math.round(fapt.pret) + ' ' + m + ', cât ai de obicei pentru o seară.';
+      return 'Costă ' + Math.round(fapt.pret) + ' ' + m + ', peste bugetul tău obișnuit de ' + fapt.buget + '.';
+    }
+    case 'proprie':
+      return 'Intrarea asta e din baza noastră, nu de pe un site — de aici știm ce nu se anunță public.';
+    case 'film':
+      return fapt.proiectii >= 60
+        ? 'Rulează în ' + fapt.cinematografe + ' cinematografe, deci îl prinzi și altă zi.'
+        : 'Are puține proiecții, nu stă mult pe ecrane.';
+    case 'continuu':
+      return 'Ține mai multe zile, îți alegi tu momentul.';
+    case 'reprezentatii':
+      return fapt.reprezentatii <= 1
+        ? 'E o singură reprezentație, nu se repetă.'
+        : 'Are ' + fapt.reprezentatii + ' reprezentații în perioada asta.';
+    case 'surse':
+      return 'Confirmat de ' + fapt.surse + ' surse independente.';
+    case 'locCunoscut':
+      return 'Știm locul: adresă și program verificate.';
+    default:
+      return null;
+  }
+}
+
+/** Insigna scurtă de pe card: faptul cel mai vandabil, într-o expresie. */
+function insigna(straturi, intrare) {
+  const f = Object.fromEntries(Object.entries(straturi).map(([k, v]) => [k, v.fapt]));
+
+  if (f.moment?.seIncheie) {
+    return { text: f.moment.zileRamase <= 1 ? 'Ultima zi' : 'Ultimele ' + f.moment.zileRamase + ' zile', bun: false };
+  }
+  if (f.unicitate?.fel === 'proprie') return { text: 'Din baza noastră', bun: true };
+  if (f.context?.fel === 'artist') return { text: 'Artist pe care îl urmărești', bun: true };
+  if (f.pret?.fel === 'gratuit') return { text: 'Intrare liberă', bun: true };
+  if (f.pret && f.pret.raport <= 0.7) {
+    return { text: Math.round((1 - f.pret.raport) * 100) + '% sub bugetul tău', bun: true };
+  }
+  if (f.reputatie?.fel === 'surse') return { text: 'Confirmat de ' + f.reputatie.surse + ' surse', bun: true };
+  if (f.unicitate?.fel === 'reprezentatii' && f.unicitate.reprezentatii <= 1) {
+    return { text: 'O singură reprezentație', bun: false };
+  }
+  if (f.unicitate?.fel === 'continuu') return { text: 'Îți alegi tu ziua', bun: false };
+  if (intrare.tip === 'film' && f.unicitate?.cinematografe) {
+    return { text: 'În ' + f.unicitate.cinematografe + ' cinematografe', bun: false };
+  }
+  return { text: 'Potrivit cu profilul tău', bun: false };
+}
+
+/* ---------- calculul ---------- */
+
+/**
+ * Scorul unei intrări pentru un profil. Întoarce scorul, straturile cu contribuțiile
+ * lor și explicația în limbaj natural — tot ce trebuie ca să arătăm „de ce ți-o arăt".
+ */
+function calculeazaScor(intrare, profil = PROFIL_IMPLICIT, acum = Date.now(), orizont = null) {
+  const straturi = {
+    context: stratContext(intrare, profil),
+    invatate: stratInvatate(intrare, profil),
+    moment: stratMoment(intrare, profil, acum, orizont),
+    pret: stratPret(intrare, profil),
+    unicitate: stratUnicitate(intrare),
+    reputatie: stratReputatie(intrare),
+  };
+
+  let brut = 0;
+  for (const [cheie, pondere] of Object.entries(PONDERI)) brut += straturi[cheie].valoare * pondere;
+  const scor = Math.round(intre(brut, 0, 1) * 100);
+
+  // Explicația ia straturile care contribuie cel mai mult ȘI au un fapt de spus.
+  const ordonate = Object.entries(straturi)
+    .map(([cheie, s]) => ({ cheie, s, greutate: s.valoare * PONDERI[cheie] }))
+    .sort((a, b) => b.greutate - a.greutate);
+
+  const motive = [];
+  for (const { cheie, s } of ordonate) {
+    const p = propozitie(cheie, s.fapt, intrare);
+    if (p && !motive.includes(p)) motive.push(p);
+    if (motive.length === 3) break;
+  }
+
+  return {
+    scor,
+    peste: scor >= PRAG_MINIM,
+    insigna: insigna(straturi, intrare),
+    de: motive.join(' ') || 'Se potrivește cu ce urmărești, fără un motiv care să ias în evidență.',
+    straturi: Object.fromEntries(Object.entries(straturi).map(([k, v]) => [k, {
+      valoare: Math.round(v.valoare * 100),
+      pondere: PONDERI[k],
+      contributie: Math.round(v.valoare * PONDERI[k] * 100),
+      incert: !!v.incert,
+    }])),
+  };
+}
+
+    return { PONDERI: PONDERI, PRAG_MINIM: PRAG_MINIM, PROFIL_IMPLICIT: PROFIL_IMPLICIT, calculeazaScor: calculeazaScor };
+  })();
+
+  var M_agenda_nucleu = (function () {
+  var calculeazaScor = M_scor.calculeazaScor, PROFIL_IMPLICIT = M_scor.PROFIL_IMPLICIT, PRAG_MINIM = M_scor.PRAG_MINIM;
+/**
+ * Nucleul agendei: din intrări brute în carduri gata de afișat.
+ *
+ * Aici nu se atinge baza de date și nu se folosește nimic din Node — fișierul
+ * rulează la fel de bine pe server și în browser. Așa, pagina de partajat poate
+ * recalcula scorurile când omul își schimbă profilul, fără niciun API în spate.
+ *
+ * Citirea din bază stă în `agenda.mjs`, care cheamă funcția de aici.
+ */
+
+
+
+const ORA = 3600e3;
+
+/** Cât în urmă mai acceptăm un început — cât să nu dispară seara în curs. */
+const TOLERANTA = 3 * ORA;
+
+const FERESTRE = {
+  diseara: 14 * ORA,
+  maine: 38 * ORA,
+  weekend: 5 * 24 * ORA,
+  saptamana: 8 * 24 * ORA,
+  luna: 32 * 24 * ORA,
+};
+
+/** categorie din bază → cum arată cardul în interfață */
+const ASPECT = {
+  concert: { cat: 'oportunitati', ic: 'music', art: 'concert' },
+  festival: { cat: 'oportunitati', ic: 'music', art: 'festival' },
+  'muzica-clasica': { cat: 'cultura', ic: 'music', art: 'concert' },
+  teatru: { cat: 'cultura', ic: 'palette', art: 'teatru' },
+  'stand-up': { cat: 'oportunitati', ic: 'smile', art: 'teatru' },
+  film: { cat: 'oportunitati', ic: 'play', art: 'oras' },
+  expozitie: { cat: 'cultura', ic: 'palette', art: 'arta' },
+  atelier: { cat: 'cultura', ic: 'palette', art: 'muzeu' },
+  cultura: { cat: 'cultura', ic: 'palette', art: 'muzeu' },
+  club: { cat: 'conexiune', ic: 'smile', art: 'noapte' },
+  social: { cat: 'conexiune', ic: 'smile', art: 'conexiune' },
+  food: { cat: 'oportunitati', ic: 'fork', art: 'masa' },
+  sport: { cat: 'sanatate', ic: 'flame', art: 'miscare' },
+};
+
+const ASPECT_IMPLICIT = { cat: 'oportunitati', ic: 'spark', art: 'oras' };
+
+/* ---------- formatare ---------- */
+
+const fmtZi = new Intl.DateTimeFormat('ro-RO', {
+  timeZone: 'Europe/Bucharest', weekday: 'short', day: '2-digit', month: 'long',
+});
+const fmtOra = new Intl.DateTimeFormat('ro-RO', {
+  timeZone: 'Europe/Bucharest', hour: '2-digit', minute: '2-digit',
+});
+const fmtData = new Intl.DateTimeFormat('ro-RO', {
+  timeZone: 'Europe/Bucharest', day: 'numeric', month: 'long',
+});
+
+/**
+ * Când are loc: „diseară, 21:00", „joi, 18 septembrie, 19:00", „până joi, 25 septembrie".
+ * Cu `absolut`, formulările relative dispar — un instantaneu salvat într-un fișier
+ * ar minți peste două zile dacă ar scrie „mâine".
+ */
+function momentEveniment(r, acum, absolut) {
+  const t = Date.parse(r.start);
+  const sf = r.sfarsit ? Date.parse(r.sfarsit) : null;
+
+  if (sf && sf - t > 36 * ORA) {
+    return absolut || t > acum
+      ? fmtZi.format(t) + ' – ' + fmtZi.format(sf)
+      : 'în desfășurare, până ' + fmtZi.format(sf);
+  }
+
+  if (absolut) return fmtZi.format(t) + ', ' + fmtOra.format(t);
+
+  const ore = (t - acum) / ORA;
+  if (ore < 0) return 'a început la ' + fmtOra.format(t);
+  if (ore < 1) return 'începe într-o oră';
+  if (ore < 12) return 'diseară, ' + fmtOra.format(t);
+  if (ore < 36) return 'mâine, ' + fmtOra.format(t);
+  return fmtZi.format(t) + ', ' + fmtOra.format(t);
+}
+
+/** De când știm de intrare — asta e eticheta de vechime din feedul de alerte. */
+function deCand(iso, acum, absolut) {
+  if (absolut) return 'verificat ' + fmtData.format(acum);
+  if (!iso) return 'nou';
+  const min = (acum - Date.parse(iso)) / 60000;
+  if (min < 2) return 'chiar acum';
+  if (min < 60) return 'acum ' + Math.round(min) + ' min';
+  if (min < 120) return 'acum o oră';
+  if (min < 24 * 60) return 'acum ' + Math.round(min / 60) + ' ore';
+  if (min < 48 * 60) return 'ieri';
+  return 'acum ' + Math.round(min / (24 * 60)) + ' zile';
+}
+
+function subtitlu(r, acum, absolut) {
+  const bucati = [momentEveniment(r, acum, absolut)];
+  if (r.locatie_nume) bucati.push(r.locatie_nume);
+  else if (r.tip === 'film' && r.cinematografe) bucati.push('în ' + r.cinematografe + ' cinematografe');
+  return bucati.join(' · ');
+}
+
+function pret(r) {
+  if (r.pret_min === null || r.pret_min === undefined) return null;
+  const m = r.moneda === 'RON' || !r.moneda ? 'lei' : r.moneda;
+  if (!r.pret_min) return 'intrare liberă';
+  if (r.pret_max && r.pret_max > r.pret_min) return Math.round(r.pret_min) + '–' + Math.round(r.pret_max) + ' ' + m;
+  return 'de la ' + Math.round(r.pret_min) + ' ' + m;
+}
+
+function detalii(r, acum) {
+  const d = [];
+  if (r.locatie_nume) d.push(['Locație', r.locatie_nume]);
+  if (r.locatie_adresa) d.push(['Adresă', r.locatie_adresa]);
+  d.push(['Începe', fmtZi.format(Date.parse(r.start)) + ', ' + fmtOra.format(Date.parse(r.start))]);
+  if (r.sfarsit && Date.parse(r.sfarsit) - Date.parse(r.start) > 36 * ORA) {
+    d.push(['Până la', fmtZi.format(Date.parse(r.sfarsit))]);
+  }
+  const p = pret(r);
+  if (p) d.push(['Preț', p]);
+  if (r.tip === 'film' && r.proiectii) d.push(['Proiecții', r.proiectii + ' în ' + r.cinematografe + ' cinematografe']);
+  if (r.reprezentatii > 1) d.push(['Reprezentații', String(r.reprezentatii)]);
+  d.push(['Confirmat de', r.manuala ? 'baza noastră' : r.surse + (r.surse === 1 ? ' sursă' : ' surse')]);
+  return d;
+}
+
+/** Titlul redus la litere și cifre, pentru a recunoaște aceeași intrare. */
+function cheieTitlu(titlu) {
+  return String(titlu || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/** O intrare din bază devine cardul pe care îl afișează interfața. */
+function card(r, rez, acum, aparitii = 1, absolut = false) {
+  const aspect = ASPECT[r.categorie] || ASPECT_IMPLICIT;
+  return {
+    id: r.id,
+    cat: aspect.cat,
+    ic: aspect.ic,
+    art: aspect.art,
+    scor: rez.scor,
+    noua: !absolut && (!r.prima_vedere || acum - Date.parse(r.prima_vedere) < 24 * ORA),
+    cand: deCand(r.prima_vedere, acum, absolut),
+    t: r.titlu,
+    s: subtitlu(r, acum, absolut),
+    pill: rez.insigna.text,
+    bun: rez.insigna.bun,
+    de: rez.de,
+    detalii: aparitii > 1
+      ? [...detalii(r, acum), ['Alte apariții', String(aparitii - 1)]]
+      : detalii(r, acum),
+    url: r.url_bilete || r.url || null,
+    categorie: r.categorie,
+    straturi: rez.straturi,
+  };
+}
+
+/* ---------- funcția principală ---------- */
+
+/**
+ * Scorează intrările brute și le întoarce pe cele care trec pragul, ca mai jos.
+ *
+ * `brute` sunt rândurile citite din bază (sau salvate într-un instantaneu).
+ * `acum` se poate fixa, ca instantaneul să dea același rezultat de fiecare dată.
+ */
+function construiesteAgenda(brute, {
+  profil = PROFIL_IMPLICIT, fereastra = 'saptamana', limita = 20,
+  prag = PRAG_MINIM, absolut = false, acum = Date.now(),
+} = {}) {
+  const orizont = acum + (FERESTRE[fereastra] || FERESTRE.saptamana);
+
+  // Într-un instantaneu, intrările rămân salvate și după ce fereastra se schimbă;
+  // le filtrăm aici, ca aceleași date să răspundă la „diseară" și la „luna asta".
+  const inFereastra = brute.filter((r) => {
+    const start = r.start ? Date.parse(r.start) : null;
+    if (!start) return false;
+    const sfarsit = r.sfarsit ? Date.parse(r.sfarsit) : start;
+    return start <= orizont && sfarsit >= acum - TOLERANTA;
+  });
+
+  const evaluate = inFereastra.map((r) => ({ r, rez: calculeazaScor(r, profil, acum, orizont) }));
+  const trecute = evaluate
+    .filter(({ rez }) => rez.scor >= prag)
+    .sort((a, b) => b.rez.scor - a.rez.scor || Date.parse(a.r.start) - Date.parse(b.r.start));
+
+  // Un festival poate fi în bază și ca umbrelă și ca reprezentație separată, în alt loc.
+  // În agendă apare o dată, cu scorul cel mai bun; celelalte apariții se numără.
+  const dupaTitlu = new Map();
+  for (const e of trecute) {
+    const cheie = cheieTitlu(e.r.titlu);
+    const primul = dupaTitlu.get(cheie);
+    if (primul) primul.aparitii = (primul.aparitii || 1) + 1;
+    else dupaTitlu.set(cheie, e);
+  }
+
+  const alese = [...dupaTitlu.values()].slice(0, limita);
+
+  return {
+    fereastra,
+    prag,
+    citite: inFereastra.length,
+    aratate: alese.length,
+    // Cât a tăiat pragul — cifra care arată că VIA chiar filtrează.
+    tacute: inFereastra.length - trecute.length,
+    generatLa: new Date(acum).toISOString(),
+    carduri: alese.map(({ r, rez, aparitii }) => card(r, rez, acum, aparitii, absolut)),
+  };
+}
+
+
+    return { TOLERANTA: TOLERANTA, FERESTRE: FERESTRE, construiesteAgenda: construiesteAgenda, PRAG_MINIM: PRAG_MINIM, PROFIL_IMPLICIT: PROFIL_IMPLICIT };
+  })();
+
+  var PONDERI = M_scor.PONDERI;
+  var PRAG_MINIM = M_scor.PRAG_MINIM;
+  var PROFIL_IMPLICIT = M_scor.PROFIL_IMPLICIT;
+  var calculeazaScor = M_scor.calculeazaScor;
+  var TOLERANTA = M_agenda_nucleu.TOLERANTA;
+  var FERESTRE = M_agenda_nucleu.FERESTRE;
+  var construiesteAgenda = M_agenda_nucleu.construiesteAgenda;
+
+  var instantaneu = {"instantaneu":"13 septembrie","eticheta":"date reale · 13 septembrie","acum":1789315375716,"generatLa":"2026-09-13T16:02:55.716Z","oras":"București","intrari":[{"id":87,"tip":"eveniment","titlu":"George Enescu Festival 2026","categorie":"festival","start":"2026-09-10T06:00:00.000Z","sfarsit":"2026-09-19T15:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.499Z","url":"https://zilesinopti.ro/evenimente/george-enescu-festival-2026/","manuala":0,"locatie_nume":"Ateneul Român","locatie_adresa":"Strada Benjamin Franklin Nr. 1-3, București","surse":1,"reprezentatii":1},{"id":83,"tip":"eveniment","titlu":"Late Summer Spritz","categorie":"expozitie","start":"2026-09-10T08:00:00.000Z","sfarsit":"2026-11-15T09:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.499Z","url":"https://zilesinopti.ro/evenimente/late-summer-spritz-mare/","manuala":0,"locatie_nume":"MARe/Muzeul de Arta Recenta","locatie_adresa":"Bulevardul Primaverii 15","surse":1,"reprezentatii":0},{"id":84,"tip":"eveniment","titlu":"Photographs by Constantin Brâncuși","categorie":"expozitie","start":"2026-09-10T08:00:00.000Z","sfarsit":"2026-09-27T08:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.499Z","url":"https://zilesinopti.ro/evenimente/photographs-by-constantin-brancusi/","manuala":0,"locatie_nume":"MARe/Muzeul de Arta Recenta","locatie_adresa":"Bulevardul Primaverii 15","surse":1,"reprezentatii":0},{"id":86,"tip":"eveniment","titlu":"Expoziţie inovativă cu bunuri restaurate din colecţia Muzeului TNB","categorie":"expozitie","start":"2026-09-10T12:00:00.000Z","sfarsit":"2026-09-25T09:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.499Z","url":"https://zilesinopti.ro/evenimente/expozitie-inovativa-cu-bunuri-restaurate-din-colectia-muzeului-tnb-2/","manuala":0,"locatie_nume":"Teatrul Național Ion Luca Caragiale București","locatie_adresa":"Bulevardul Nicolae Bălcescu nr. 2, București","surse":1,"reprezentatii":0},{"id":96,"tip":"eveniment","titlu":"Cinema sub stele: Sci-Fi & Mind-Bending Week","categorie":"film","start":"2026-09-13T18:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.510Z","url":"https://zilesinopti.ro/evenimente/cinema-sub-stele-sci-fi-mind-bending/","manuala":0,"locatie_nume":"#altfel Park Lake","locatie_adresa":"București","surse":1,"reprezentatii":1},{"id":88,"tip":"eveniment","titlu":"George Enescu Festival 2026","categorie":"festival","start":"2026-09-14T06:00:00.000Z","sfarsit":"2026-09-15T06:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.499Z","url":"https://zilesinopti.ro/evenimente/george-enescu-festival-2026/","manuala":0,"locatie_nume":"Universitatea Națională de Muzică București","locatie_adresa":"Str. Ştirbei Vodă 33","surse":1,"reprezentatii":1},{"id":59,"tip":"eveniment","titlu":"Freak Show vol. 2 (Florin Piersic jr.)","categorie":"teatru","start":"2026-09-15T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.493Z","url":"https://zilesinopti.ro/evenimente/freak-show-vol-2-tnb/","manuala":0,"locatie_nume":"Teatrul Național Ion Luca Caragiale – Sala Pictura","locatie_adresa":"Bulevardul Nicolae Bălcescu nr. 2, București","surse":1,"reprezentatii":2},{"id":1,"tip":"eveniment","titlu":"Rock Sympho Show IV","categorie":"concert","start":"2026-09-16T16:30:00.000Z","sfarsit":"2026-09-16T16:30:00.000Z","prima_vedere":"2026-09-10T10:40:00.420Z","moneda":"RON","url":"https://8pm.ro/events/rock-symphony-show-sala-palatului-2026-09-16/","url_bilete":"https://www.entertix.ro/evenimente/37012/rock-symphony-show-16-septembrie-2026-sala-palatului-bucuresti.html","artisti":"[\"PRIME Orchestra\"]","manuala":0,"locatie_nume":"Sala Palatului","locatie_adresa":"Strada Ion Campineanu Nr. 28","surse":1,"reprezentatii":1},{"id":89,"tip":"eveniment","titlu":"Bucharest Feminist Film Festival 2026","categorie":"festival","start":"2026-09-17T16:00:00.000Z","sfarsit":"2026-09-20T11:30:00.000Z","prima_vedere":"2026-09-10T10:42:03.499Z","url":"https://zilesinopti.ro/evenimente/bucharest-feminist-film-festival-2026/","manuala":0,"locatie_nume":"Cinema Muzeul Țăranului Român","locatie_adresa":"Strada Monetăriei nr 3, București","surse":1,"reprezentatii":1},{"id":98,"tip":"eveniment","titlu":"Atelier de scenaristică: meşteşug sau inspiraţie? | Fundația Calea Victoriei","categorie":"atelier","start":"2026-09-17T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.510Z","url":"https://zilesinopti.ro/evenimente/atelier-de-scenaristica-mestesug/","manuala":0,"locatie_nume":"Casa General Henri Cihoschi","locatie_adresa":"Bulevardul Dacia 78, București 030167","surse":1,"reprezentatii":4},{"id":104,"tip":"eveniment","titlu":"Boema nebună din Montmartre şi Montparnasse | Fundația Calea Victoriei","categorie":"atelier","start":"2026-09-17T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.514Z","url":"https://zilesinopti.ro/evenimente/boema-nebuna-din-montmartre-2/","manuala":0,"locatie_nume":"Casa General Henri Cihoschi","locatie_adresa":"Bulevardul Dacia 78, București 030167","surse":1,"reprezentatii":2},{"id":107,"tip":"eveniment","titlu":"Care este stilul tău? Ghid de descoperire în design interior | Fundația Calea Victoriei","categorie":"atelier","start":"2026-09-17T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.514Z","url":"https://zilesinopti.ro/evenimente/care-este-stilul-tau-design-interior/","manuala":0,"locatie_nume":"Casa General Henri Cihoschi","locatie_adresa":"Bulevardul Dacia 78, București 030167","surse":1,"reprezentatii":1},{"id":2,"tip":"eveniment","titlu":"Cargo - Te Chem","categorie":"concert","start":"2026-09-18T13:00:00.000Z","sfarsit":"2026-09-18T13:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.420Z","pret_min":69,"pret_max":184,"moneda":"RON","url":"https://8pm.ro/events/concert-cargo-te-chem-arenele-romane-2026-09-18/","url_bilete":"https://get-in.ro/eveniment/concert-cargo-te-chem-arenele-romane-18-septembrie-2026/","artisti":"[\"Cargo\"]","manuala":0,"locatie_nume":"Arenele Romane","locatie_adresa":"Str. Cutitul de Argint 26","surse":1,"reprezentatii":1},{"id":3,"tip":"eveniment","titlu":"David Garrett","categorie":"muzica-clasica","start":"2026-09-18T17:00:00.000Z","sfarsit":"2026-09-18T17:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.420Z","pret_min":254,"pret_max":254,"moneda":"RON","url":"https://8pm.ro/events/david-garrett-sala-palatului-2026-09-18/","url_bilete":"https://www.eventim.ro/event/david-garrett-sala-palatului-21075870/","artisti":"[\"David Garrett\"]","manuala":0,"locatie_nume":"Sala Palatului","locatie_adresa":"Strada Ion Campineanu Nr. 28","surse":1,"reprezentatii":1},{"id":4,"tip":"eveniment","titlu":"No Ledge Fest","categorie":"festival","start":"2026-09-19T07:00:00.000Z","sfarsit":"2026-09-19T07:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.420Z","moneda":"RON","url":"https://8pm.ro/events/no-ledge-fest-2026-sala-palatului-2026-09-19/","url_bilete":"https://www.entertix.ro/evenimente/34335/no-ledge-fest-2026-19-septembrie-2026-sala-palatului-bucuresti.html","artisti":"[\"Gerd Leonhard\",\"TJ Power\",\"Ozana Giușcă\",\"Echoes of Time\"]","manuala":0,"locatie_nume":"Sala Palatului","locatie_adresa":"Strada Ion Campineanu Nr. 28","surse":1,"reprezentatii":1},{"id":60,"tip":"eveniment","titlu":"Freak Show vol. 2 (Florin Piersic jr.)","categorie":"teatru","start":"2026-09-20T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.497Z","url":"https://zilesinopti.ro/evenimente/freak-show-vol-2-tnb/","manuala":0,"locatie_nume":"Teatrul Național Ion Luca Caragiale – Sala Pictura","locatie_adresa":"Bulevardul Nicolae Bălcescu nr. 2, București","surse":1,"reprezentatii":2},{"id":90,"tip":"eveniment","titlu":"Bucharest International Experimental Film Festival BIEFF 2026","categorie":"festival","start":"2026-09-23T16:00:00.000Z","sfarsit":"2026-09-28T17:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.499Z","url":"https://zilesinopti.ro/evenimente/bucharest-international-experimental-film-festival-bieff-2026/","manuala":0,"locatie_nume":"Cinema Elvire Popesco","locatie_adresa":"Bulevardul Dacia nr. 77, București","surse":1,"reprezentatii":2},{"id":69,"tip":"eveniment","titlu":"Frumosul și Bestiile","categorie":"teatru","start":"2026-09-23T17:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.499Z","url":"https://zilesinopti.ro/evenimente/frumosul-si-bestiile-ff-theatre/","manuala":0,"locatie_nume":"FF Theatre","locatie_adresa":"Strada Smârdan nr. 5, București","surse":1,"reprezentatii":1},{"id":5,"tip":"eveniment","titlu":"Energy Expo 2026","categorie":"eveniment","start":"2026-09-24T07:00:00.000Z","sfarsit":"2026-09-26T00:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.420Z","moneda":"RON","url":"https://8pm.ro/events/energy-expo-2026-romaero-s-a-2026-09-24/","url_bilete":"https://www.eventbrite.com/e/energy-expo-2026-tickets-1977376538456","manuala":0,"locatie_nume":"ROMAERO S.A.","locatie_adresa":"44 Bulevardul Ficusului, 013975 București","surse":1,"reprezentatii":1},{"id":99,"tip":"eveniment","titlu":"Atelier de scenaristică: meşteşug sau inspiraţie? | Fundația Calea Victoriei","categorie":"atelier","start":"2026-09-24T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.512Z","url":"https://zilesinopti.ro/evenimente/atelier-de-scenaristica-mestesug/","manuala":0,"locatie_nume":"Casa General Henri Cihoschi","locatie_adresa":"Bulevardul Dacia 78, București 030167","surse":1,"reprezentatii":4},{"id":105,"tip":"eveniment","titlu":"Boema nebună din Montmartre şi Montparnasse | Fundația Calea Victoriei","categorie":"atelier","start":"2026-09-24T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.514Z","url":"https://zilesinopti.ro/evenimente/boema-nebuna-din-montmartre-2/","manuala":0,"locatie_nume":"Casa General Henri Cihoschi","locatie_adresa":"Bulevardul Dacia 78, București 030167","surse":1,"reprezentatii":2},{"id":6,"tip":"eveniment","titlu":"Adrian Minune - Concert Aniversar","categorie":"concert","start":"2026-09-24T17:00:00.000Z","sfarsit":"2026-09-24T17:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.420Z","pret_min":200,"pret_max":400,"moneda":"RON","url":"https://8pm.ro/events/adrian-minune-concert-aniversar-24-septembrie-2026-beraria-h-2026-09-24/","url_bilete":"https://www.yellowtickets.ro/bilete/concert-adrian-minune-52-bucuresti-2026","artisti":"[\"Adrian Minune\",\"Vali Vijelie\",\"Costel Biju\",\"Tzancă Uraganu’\",\"Cocoș de la Călărași\",\"Vlăduța Lupău\",\"Lele\",\"Cristi Nucă\",\"Minodora\",\"Elis Armeanca\",\"Maria Constantin\",\"Adriana Simionescu\",\"Kristiyana\",\"Diana Matei\",\"Adrian Minune\",\"Karmen Minune\",\"Marius Baban\"]","manuala":0,"locatie_nume":"Beraria H","locatie_adresa":"Kiseleff 32, Parc Herastrau, (fostul Pavilion H), 011343 București, TEL: +40 725.345.345","surse":1,"reprezentatii":1},{"id":50,"tip":"eveniment","titlu":"Manifest Editorial","categorie":"concert","start":"2026-09-25T14:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.477Z","url":"https://zilesinopti.ro/evenimente/manifest-editorial-oclu/","manuala":0,"locatie_nume":"Oclu","locatie_adresa":"București","surse":1,"reprezentatii":1},{"id":62,"tip":"eveniment","titlu":"E vina ta! (Tomi Cristin)","categorie":"teatru","start":"2026-09-25T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.497Z","url":"https://zilesinopti.ro/evenimente/e-vina-ta-tomi-cristin-tnb/","manuala":0,"locatie_nume":"Teatrul Național Ion Luca Caragiale – Sala Atelier","locatie_adresa":"Bulevardul Nicolae Bălcescu nr. 2, București","surse":1,"reprezentatii":1},{"id":7,"tip":"eveniment","titlu":"Slow Coffee Festival – Ediția Aniversară #10","categorie":"festival","start":"2026-09-25T17:00:00.000Z","sfarsit":"2026-09-27T17:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.431Z","pret_min":36.91,"pret_max":36.91,"moneda":"RON","url":"https://8pm.ro/events/slow-coffee-festival-editia-aniversara-10-romexpo-2026-09-25/","url_bilete":"https://www.iabilet.ro/bilete-slow-coffee-festival-editia-aniversara-10-117138/","manuala":0,"locatie_nume":"Romexpo","locatie_adresa":"Bulevardul Mărăști 65-67","surse":1,"reprezentatii":1},{"id":67,"tip":"eveniment","titlu":"Divorț în ziua nunții","categorie":"teatru","start":"2026-09-26T13:30:00.000Z","prima_vedere":"2026-09-10T10:42:03.497Z","url":"https://zilesinopti.ro/evenimente/divort-in-ziua-nuntii-teatrul-rosu/","manuala":0,"locatie_nume":"Teatrul Roșu","locatie_adresa":"Strada Bărăției nr. 31, București","surse":1,"reprezentatii":1},{"id":8,"tip":"eveniment","titlu":"Bernard Frize & Photographs by Constantin Brâncuși","categorie":"expozitie","start":"2026-09-27T17:00:00.000Z","sfarsit":"2026-09-27T00:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.431Z","moneda":"RON","url":"https://8pm.ro/events/bernard-frize-photographs-by-constantin-brancusi-mare-muzeul-de-arta-recenta-2026-09-27/","url_bilete":"https://www.entertix.ro/evenimente/37872/bernard-frize-photographs-by-constantin-brncui-4-may-27-sep-2026-mare-muzeul-de-arta-recenta-bucuresti.html","artisti":"[\"Bernard Frize\",\"Constantin Brâncuși\",\"Gregory Lang\",\"Ioana Iuna Șerban\",\"Elena Stanciu\"]","manuala":0,"locatie_nume":"MARe/Muzeul de Arta Recenta","locatie_adresa":"Bulevardul Primaverii 15","surse":1,"reprezentatii":1},{"id":91,"tip":"eveniment","titlu":"Bucharest International Experimental Film Festival BIEFF 2026","categorie":"festival","start":"2026-09-29T15:00:00.000Z","sfarsit":"2026-09-30T15:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.510Z","url":"https://zilesinopti.ro/evenimente/bucharest-international-experimental-film-festival-bieff-2026/","manuala":0,"locatie_nume":"Cinema Union","locatie_adresa":"Strada Ion Câmpineanu 21","surse":1,"reprezentatii":2},{"id":100,"tip":"eveniment","titlu":"Atelier de scenaristică: meşteşug sau inspiraţie? | Fundația Calea Victoriei","categorie":"atelier","start":"2026-10-01T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.512Z","url":"https://zilesinopti.ro/evenimente/atelier-de-scenaristica-mestesug/","manuala":0,"locatie_nume":"Casa General Henri Cihoschi","locatie_adresa":"Bulevardul Dacia 78, București 030167","surse":1,"reprezentatii":4},{"id":9,"tip":"eveniment","titlu":"Vivaldi + Da Vinci","categorie":"expozitie","start":"2026-10-03T17:00:00.000Z","sfarsit":"2026-10-03T00:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.431Z","moneda":"RON","url":"https://8pm.ro/events/vivaldi-da-vinci-mina-museum-2026-10-03/","url_bilete":"https://www.entertix.ro/evenimente/34338/vivaldi-da-vinci-3-jan-3-oct-2026-mina-museum-bucuresti.html","artisti":"[\"Vivaldi\",\"Leonardo Da Vinci\"]","manuala":0,"locatie_nume":"MINA Museum","locatie_adresa":"George Constantinescu 2 – 4","surse":1,"reprezentatii":1},{"id":101,"tip":"eveniment","titlu":"Atelier de scenaristică: meşteşug sau inspiraţie? | Fundația Calea Victoriei","categorie":"atelier","start":"2026-10-08T16:00:00.000Z","prima_vedere":"2026-09-10T10:42:03.512Z","url":"https://zilesinopti.ro/evenimente/atelier-de-scenaristica-mestesug/","manuala":0,"locatie_nume":"Casa General Henri Cihoschi","locatie_adresa":"Bulevardul Dacia 78, București 030167","surse":1,"reprezentatii":4},{"id":10,"tip":"eveniment","titlu":"Empretec Pro cu Sorin Matei","categorie":"eveniment","start":"2026-10-09T05:00:00.000Z","sfarsit":"2026-10-17T17:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.431Z","moneda":"RON","url":"https://8pm.ro/events/empretec-pro-cu-sorin-matei-bucuresti-workshop-pen-ibis-styles-bucharest-city-center-2026-10-09/","url_bilete":"https://www.eventbrite.com/e/empretec-pro-cu-sorin-matei-bucuresti-workshop-pentru-antreprenori-registration-858909099237","artisti":"[\"Sorin Matei\"]","manuala":0,"locatie_nume":"ibis Styles Bucharest City Center","locatie_adresa":"146 Strada Știrbei Vodă, 010119 București","surse":1,"reprezentatii":1},{"id":11,"tip":"eveniment","titlu":"ROWINE Autumn Edition Bucharest 2026","categorie":"festival","start":"2026-10-09T11:00:00.000Z","sfarsit":"2026-10-11T00:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.431Z","pret_min":110,"pret_max":110,"moneda":"RON","url":"https://8pm.ro/events/rowine-autumn-edition-bucharest-2026-09-11-oct-fratelli-studios-2026-10-09/","url_bilete":"https://www.bilete.ro/ro-wine/rowine-autumn-edition-bucharest-2026-09-11-oct-2026/","manuala":0,"locatie_nume":"Fratelli Studios","locatie_adresa":"Strada Glodeni 1-3","surse":1,"reprezentatii":1},{"id":12,"tip":"eveniment","titlu":"RoWine Autumn Edition","categorie":"festival","start":"2026-10-09T11:00:00.000Z","sfarsit":"2026-10-11T00:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.431Z","moneda":"RON","url":"https://8pm.ro/events/rowine-autumn-edition-bucharest-2026-09-11-oct-fratelli-studio-1-2026-10-09/","url_bilete":"https://www.entertix.ro/evenimente/34296/rowine-autumn-edition-bucharest-2026-09-11-oct-9-11-octombrie-2026-fratelli-studio-1-bucuresti.html","manuala":0,"locatie_nume":"Fratelli Studio 1","locatie_adresa":"Strada Glodeni 1-3","surse":1,"reprezentatii":1},{"id":13,"tip":"eveniment","titlu":"Holy Fuck","categorie":"concert","start":"2026-10-10T17:00:00.000Z","sfarsit":"2026-10-10T17:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.431Z","pret_min":75,"pret_max":75,"moneda":"RON","url":"https://8pm.ro/events/ctrl-live-holy-fuck-ca-club-control-2026-10-10/","url_bilete":"https://eventbook.ro/music/bilete-ctrl-live-holy-fuck","artisti":"[\"Holy Fuck\"]","manuala":0,"locatie_nume":"Club Control","locatie_adresa":"Str. Constantin Mille, nr. 4, București","surse":1,"reprezentatii":1},{"id":14,"tip":"eveniment","titlu":"Georgian Royal Ballet","categorie":"muzica-clasica","start":"2026-10-12T16:30:00.000Z","sfarsit":"2026-10-12T16:30:00.000Z","prima_vedere":"2026-09-10T10:40:00.431Z","moneda":"RON","url":"https://8pm.ro/events/georgian-royal-ballet-sala-palatului-2026-10-12/","url_bilete":"https://www.entertix.ro/evenimente/35022/georgian-royal-ballet-12-octombrie-2026-sala-palatului-bucuresti.html","artisti":"[\"Baletul Național Regal al Georgiei\",\"Gela Potskhishvili\",\"Maia Kiknadze\"]","manuala":0,"locatie_nume":"Sala Palatului","locatie_adresa":"Strada Ion Campineanu Nr. 28","surse":1,"reprezentatii":1},{"id":15,"tip":"eveniment","titlu":"Arabian Night cu Abeer Nehme – Concert Extraordinar","categorie":"concert","start":"2026-10-14T17:00:00.000Z","sfarsit":"2026-10-14T17:00:00.000Z","prima_vedere":"2026-09-10T10:40:00.432Z","pret_min":250,"pret_max":250,"moneda":"RON","url":"https://8pm.ro/events/arabian-night-cu-abeer-nehme-concert-extraordinar-sala-palatului-2026-10-14/","url_bilete":"https://www.entertix.ro/evenimente/32168/abeer-nehme-live-in-concert-14-octombrie-2026-sala-palatului-bucuresti.html","artisti":"[\"Abeer Nehme\",\"Laura Olteanu\",\"Orchestra Moldovlaska\",\"Fanfara lui Bulgaru\"]","manuala":0,"locatie_nume":"Sala Palatului Bucuresti","surse":1,"reprezentatii":1},{"id":150,"tip":"film","titlu":"100","titlu_alt":"100 lei","categorie":"film","start":"2026-09-13T17:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/100-3363/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":153,"tip":"film","titlu":"3 zile în septembrie","titlu_alt":"3 zile în septembrie","categorie":"film","start":"2026-09-14T16:30:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/3-zile-in-septembrie-3326765/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":14,"cinematografe":9},{"id":156,"tip":"film","titlu":"A River's Gaze","titlu_alt":"Malul vânăt","categorie":"film","start":"2026-09-14T16:20:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/a-rivers-gaze-3327179/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":114,"tip":"film","titlu":"By Any Means","titlu_alt":"Cu orice preț","categorie":"film","start":"2026-09-13T13:20:00.000Z","prima_vedere":"2026-09-10T10:42:19.298Z","url":"https://www.cinemagia.ro/filme/by-any-means-3329405/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":145,"cinematografe":12},{"id":119,"tip":"film","titlu":"Cars","titlu_alt":"Mașini","categorie":"film","start":"2026-09-13T14:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.340Z","url":"https://www.cinemagia.ro/filme/cars-masini-6037/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":63,"cinematografe":10},{"id":145,"tip":"film","titlu":"Cats in the Museum: Treasures of Egypt","titlu_alt":"Pisicile de la muzeu 2: Comoara din Egipt","categorie":"film","start":"2026-09-13T13:10:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/cats-in-the-museum-treasures-of-egypt-3329551/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":5,"cinematografe":4},{"id":159,"tip":"film","titlu":"Chronicle","titlu_alt":"Cronici","categorie":"film","start":"2026-09-15T15:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/chronicle-566845/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":165,"tip":"film","titlu":"Constantine","titlu_alt":"Constantin","categorie":"film","start":"2026-09-16T14:30:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/constantine-constantin-7156/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":112,"tip":"film","titlu":"Coyote vs. Acme","titlu_alt":"Coyote vs. Acme","categorie":"film","start":"2026-09-13T13:10:00.000Z","prima_vedere":"2026-09-10T10:42:19.270Z","url":"https://www.cinemagia.ro/filme/coyote-vs-acme-584191/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":175,"cinematografe":15},{"id":111,"tip":"film","titlu":"Dosarele orașului alb","titlu_alt":"Dosarele orașului alb","categorie":"film","start":"2026-09-13T13:15:00.000Z","prima_vedere":"2026-09-10T10:42:19.270Z","url":"https://www.cinemagia.ro/filme/dosarele-orasului-alb-3325859/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":114,"cinematografe":10},{"id":118,"tip":"film","titlu":"Fall 2: Deadpoint","titlu_alt":"Pericol la înălțime","categorie":"film","start":"2026-09-13T13:45:00.000Z","prima_vedere":"2026-09-10T10:42:19.340Z","url":"https://www.cinemagia.ro/filme/fall-2-deadpoint-3329409/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":117,"cinematografe":11},{"id":160,"tip":"film","titlu":"Funny Games","titlu_alt":"Jocuri stranii","categorie":"film","start":"2026-09-15T15:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/funny-games-19919/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":158,"tip":"film","titlu":"Fuori","titlu_alt":"Afară","categorie":"film","start":"2026-09-15T17:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/fuori-3323079/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":128,"tip":"film","titlu":"Gail Daughtry and the Celebrity Sex Pass","titlu_alt":"Gail Daughtry - Liber la sex cu vedete","categorie":"film","start":"2026-09-13T19:50:00.000Z","prima_vedere":"2026-09-10T10:42:19.367Z","url":"https://www.cinemagia.ro/filme/gail-daughtry-and-the-celebrity-sex-pass-3328601/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":4,"cinematografe":1},{"id":117,"tip":"film","titlu":"Handbook for Superheroes","titlu_alt":"Cum să devii supererou: Masca roșie","categorie":"film","start":"2026-09-13T13:30:00.000Z","prima_vedere":"2026-09-10T10:42:19.334Z","url":"https://www.cinemagia.ro/filme/handbook-for-superheroes-3329549/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":75,"cinematografe":11},{"id":142,"tip":"film","titlu":"Hoinari prin munți","titlu_alt":"Hoinari prin munți","categorie":"film","start":"2026-09-13T13:30:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/hoinari-prin-munti-3329627/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":19,"cinematografe":4},{"id":163,"tip":"film","titlu":"Iertarea","titlu_alt":"Iertarea","categorie":"film","start":"2026-09-16T17:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/iertarea-3329975/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":124,"tip":"film","titlu":"Insidious: Out of the Further","titlu_alt":"Insidious: Ei sunt printre noi","categorie":"film","start":"2026-09-13T13:10:00.000Z","prima_vedere":"2026-09-10T10:42:19.367Z","url":"https://www.cinemagia.ro/filme/insidious-out-of-the-further-3320379/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":92,"cinematografe":10},{"id":151,"tip":"film","titlu":"L'attachement","titlu_alt":"Atasamentul","categorie":"film","start":"2026-09-16T15:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/lattachement-3327791/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":149,"tip":"film","titlu":"La grande bellezza","titlu_alt":"Marea frumusețe","categorie":"film","start":"2026-09-13T17:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/la-grande-bellezza-578762/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":161,"tip":"film","titlu":"La pianiste","titlu_alt":"Pianista","categorie":"film","start":"2026-09-15T17:30:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/la-pianiste-profesoara-de-pian-4283/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":110,"tip":"film","titlu":"Le crime du 3e étage","titlu_alt":"Crima de la etajul 3","categorie":"film","start":"2026-09-13T14:40:00.000Z","prima_vedere":"2026-09-10T10:42:19.270Z","url":"https://www.cinemagia.ro/filme/le-crime-du-3e-etage-3328469/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":74,"cinematografe":9},{"id":155,"tip":"film","titlu":"Los domingos","titlu_alt":"Duminicile","categorie":"film","start":"2026-09-14T17:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/los-domingos-3327939/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":164,"tip":"film","titlu":"Midnight in Paris","titlu_alt":"Miezul nopții în Paris","categorie":"film","start":"2026-09-16T18:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/midnight-in-paris-33984/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":136,"tip":"film","titlu":"Minions & Monsters","titlu_alt":"Minionii și monștrii","categorie":"film","start":"2026-09-14T11:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/minions-monsters-3320799/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":9,"cinematografe":3},{"id":135,"tip":"film","titlu":"Moana","titlu_alt":"Vaiana","categorie":"film","start":"2026-09-14T10:20:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/moana-3302793/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":3,"cinematografe":1},{"id":121,"tip":"film","titlu":"Mutiny","titlu_alt":"Trădare la nivel înalt","categorie":"film","start":"2026-09-13T14:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.350Z","url":"https://www.cinemagia.ro/filme/mutiny-3317841/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":57,"cinematografe":11},{"id":166,"tip":"film","titlu":"Nine to Five","titlu_alt":"De la 9 la 5","categorie":"film","start":"2026-09-16T17:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/nine-to-five-de-la-9-la-5-4272/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":113,"tip":"film","titlu":"Oasis: Don't Look Back in Anger","titlu_alt":"Oasis: Don't Look Back in Anger","categorie":"film","start":"2026-09-13T13:10:00.000Z","prima_vedere":"2026-09-10T10:42:19.286Z","url":"https://www.cinemagia.ro/filme/oasis-dont-look-back-in-anger-3329799/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":111,"cinematografe":11},{"id":122,"tip":"film","titlu":"One Night Only","titlu_alt":"Aventură de o noapte","categorie":"film","start":"2026-09-13T13:25:00.000Z","prima_vedere":"2026-09-10T10:42:19.350Z","url":"https://www.cinemagia.ro/filme/one-night-only-3324875/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":40,"cinematografe":6},{"id":126,"tip":"film","titlu":"PAW Patrol: The Dino Movie","titlu_alt":"Patrula cățelușilor: În lumea dinozaurilor","categorie":"film","start":"2026-09-13T13:10:00.000Z","prima_vedere":"2026-09-10T10:42:19.367Z","url":"https://www.cinemagia.ro/filme/paw-patrol-the-dino-movie-3313333/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":77,"cinematografe":11},{"id":115,"tip":"film","titlu":"Practical Magic 2","titlu_alt":"Ce vrăji mai fac fetele 2","categorie":"film","start":"2026-09-13T13:30:00.000Z","prima_vedere":"2026-09-10T10:42:19.302Z","url":"https://www.cinemagia.ro/filme/practical-magic-2-3324903/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":155,"cinematografe":12},{"id":154,"tip":"film","titlu":"Redoubt","titlu_alt":"Ultimul refugiu","categorie":"film","start":"2026-09-14T15:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/redoubt-3329783/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":116,"tip":"film","titlu":"Sacrifice","titlu_alt":"Sacrificiul","categorie":"film","start":"2026-09-13T13:10:00.000Z","prima_vedere":"2026-09-10T10:42:19.318Z","url":"https://www.cinemagia.ro/filme/sacrifice-3330161/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":83,"cinematografe":11},{"id":125,"tip":"film","titlu":"Spa Weekend","titlu_alt":"Weekend la Spa","categorie":"film","start":"2026-09-13T17:20:00.000Z","prima_vedere":"2026-09-10T10:42:19.367Z","url":"https://www.cinemagia.ro/filme/spa-weekend-3329165/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":4,"cinematografe":3},{"id":132,"tip":"film","titlu":"Spider-Man: Brand New Day","titlu_alt":"Omul-Păianjen: O nouă zi","categorie":"film","start":"2026-09-13T13:05:00.000Z","prima_vedere":"2026-09-10T10:42:19.367Z","url":"https://www.cinemagia.ro/filme/spider-man-brand-new-day-3323039/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":138,"cinematografe":11},{"id":123,"tip":"film","titlu":"The Dog Stars","titlu_alt":"Constelația câinelui","categorie":"film","start":"2026-09-13T13:15:00.000Z","prima_vedere":"2026-09-10T10:42:19.362Z","url":"https://www.cinemagia.ro/filme/the-dog-stars-3323133/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":79,"cinematografe":8},{"id":129,"tip":"film","titlu":"The End of Oak Street","titlu_alt":"Capătul Străzii Stejar","categorie":"film","start":"2026-09-13T16:45:00.000Z","prima_vedere":"2026-09-10T10:42:19.367Z","url":"https://www.cinemagia.ro/filme/the-end-of-oak-street-3315139/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":4,"cinematografe":3},{"id":134,"tip":"film","titlu":"The Odyssey","titlu_alt":"Odiseea","categorie":"film","start":"2026-09-13T13:15:00.000Z","prima_vedere":"2026-09-10T10:42:19.386Z","url":"https://www.cinemagia.ro/filme/the-odyssey-3320839/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":117,"cinematografe":11},{"id":131,"tip":"film","titlu":"The Pout-Pout Fish","titlu_alt":"Povestea peștelui posac","categorie":"film","start":"2026-09-13T14:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.367Z","url":"https://www.cinemagia.ro/filme/the-pout-pout-fish-3324565/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":10,"cinematografe":2},{"id":137,"tip":"film","titlu":"Toy Story 5","titlu_alt":"Povestea jucăriilor 5","categorie":"film","start":"2026-09-14T11:50:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/toy-story-5-3313757/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":6,"cinematografe":1},{"id":157,"tip":"film","titlu":"Training Day","titlu_alt":"Zi de instrucție","categorie":"film","start":"2026-09-14T18:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/training-day-zi-de-instructie-2080/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1},{"id":162,"tip":"film","titlu":"Unbreakable","titlu_alt":"Indestructibilul","categorie":"film","start":"2026-09-15T17:00:00.000Z","prima_vedere":"2026-09-10T10:42:19.399Z","url":"https://www.cinemagia.ro/filme/unbreakable-indestructibilul-5/","manuala":0,"surse":1,"reprezentatii":0,"proiectii":1,"cinematografe":1}]};
+
+  window.VIA_MOTOR = {
+    instantaneu: instantaneu,
+    /** Aceeași funcție ca pe server, cu momentul înghețat la data instantaneului. */
+    agenda: function (optiuni) {
+      return construiesteAgenda(instantaneu.intrari, Object.assign({
+        absolut: true,
+        acum: instantaneu.acum,
+      }, optiuni || {}));
+    },
+    PRAG_MINIM: PRAG_MINIM,
+    PROFIL_IMPLICIT: PROFIL_IMPLICIT,
+  };
+
+  function pune() {
+    if (window.VIA && typeof window.VIA.motorPornit === 'function') window.VIA.motorPornit();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', pune);
   else pune();
