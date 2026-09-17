@@ -1282,6 +1282,11 @@ const GUST_IMPLICIT = {
 
 const GUST = { ...GUST_IMPLICIT };
 
+/* Cu ce vrea să fie ajutat în primul rând. Din asta se propune companionul
+   potrivit: fiecare Genie are o categorie pe care o urmărește cu prioritate. */
+GUST_IMPLICIT.focus = 'oportunitati';
+GUST.focus = 'oportunitati';
+
 /* Cât e o seară, în trei trepte. Bugetul intră direct în stratul „valoare și preț". */
 const BUGETE = [
   { v: 80, t: 'Până în 80 lei', s: 'caut ce e ieftin sau gratuit' },
@@ -1339,6 +1344,7 @@ function salveazaGust() {
       buget: GUST.buget,
       seriLibere: GUST.seriLibere,
       artisti: GUST.artisti,
+      focus: GUST.focus,
       oprite: Object.entries(INTERESE).flatMap(([k, lista]) =>
         lista.map((it, i) => (it.on ? null : k + ':' + i)).filter(Boolean)),
     }));
@@ -1352,6 +1358,7 @@ function incarcaGust() {
   if (Number(salvat.buget) > 0) GUST.buget = Number(salvat.buget);
   if (Array.isArray(salvat.seriLibere)) GUST.seriLibere = salvat.seriLibere.filter((z) => z >= 0 && z <= 6);
   if (Array.isArray(salvat.artisti)) GUST.artisti = salvat.artisti;
+  if (CATEGORII[salvat.focus]) GUST.focus = salvat.focus;
   if (Array.isArray(salvat.oprite)) {
     const oprite = new Set(salvat.oprite);
     for (const [k, lista] of Object.entries(INTERESE)) {
@@ -1378,6 +1385,30 @@ function filtruCurent() {
       + AGENDA_META.aratate + (AGENDA_META.aratate === 1 ? ' ți-a fost arătat' : ' ți-au fost arătate'),
     v: Math.round(AGENDA_META.tacute / Math.max(AGENDA_META.citite, 1) * 100),
   };
+}
+
+/**
+ * Alertele pe care VIA a ales să le spună — subsetul din agendă care a meritat o
+ * întrerupere. Există doar cu serverul pornit: o alertă înseamnă „ce s-a schimbat
+ * față de ieri", iar un instantaneu n-are ieri.
+ */
+let ALERTE_VIA = [];
+
+/** De ce te-a întrerupt VIA, spus omenește. */
+const MOTIVE_ALERTA = {
+  noua: 'Apărut de curând',
+  pret: 'A scăzut prețul',
+  final: 'Se închide curând',
+};
+
+/** „acum 2 ore", „ieri", „acum 3 zile" — de când e alerta. */
+function candAlerta(iso) {
+  if (!iso) return 'acum';
+  const min = (Date.now() - Date.parse(iso)) / 60000;
+  if (min < 60) return 'acum ' + Math.max(1, Math.round(min)) + ' min';
+  if (min < 24 * 60) return 'acum ' + Math.round(min / 60) + ' ore';
+  if (min < 48 * 60) return 'ieri';
+  return 'acum ' + Math.round(min / (24 * 60)) + ' zile';
 }
 
 /** Fereastra de timp pentru care se cere agenda. Se schimbă din ecranul Acasă. */
@@ -1890,17 +1921,43 @@ function pasSalut() {
   '</div></div>';
 }
 
+/** Companionii care se ocupă de ce a cerut omul la pasul de gust. */
+function companioniPotriviti(lista) {
+  return lista.filter((c) => c.spec === GUST.focus);
+}
+
+/**
+ * Dacă cel selectat nu se ocupă de ce a cerut omul, îl schimbăm cu unul care se
+ * ocupă. Rămâne oricând liber să aleagă altul — doar că pornește de la o potrivire.
+ */
+function propuneCompanion() {
+  const potriviti = companioniPotriviti(COMPANIONS.filter((c) => c.grup === P().grupCompanioni));
+  if (!potriviti.length) return;
+  if (companionCurent().spec === GUST.focus) return;
+  aplicaCompanion(potriviti[0].id, false);
+}
+
 function pasAlegere() {
   const grup = P().grupCompanioni;
-  const lista = COMPANIONS.filter((c) => c.grup === grup);
+  const toti = COMPANIONS.filter((c) => c.grup === grup);
+  const potriviti = new Set(companioniPotriviti(toti).map((c) => c.id));
+
+  // Întâi cei care se ocupă de ce l-a interesat; restul rămân disponibili dedesubt.
+  const lista = [...toti].sort((a, b) => (potriviti.has(b.id) ? 1 : 0) - (potriviti.has(a.id) ? 1 : 0));
+
   const sel = companionCurent();
   const spec = CATEGORII[sel.spec];
+  const ales = CATEGORII[GUST.focus];
 
   return '<div class="onb-step">' +
     '<div class="pick-head">' +
       '<div><h2>Alege companionul tău Genie</h2>' +
       '<p>VIA e sistemul care urmărește. Genie e vocea care îți vorbește. ' +
-      'Fiecare vine cu tonul lui și cu o categorie pe care o urmărește cu prioritate — și se aplică pe loc.</p></div>' +
+      (potriviti.size
+        ? 'Ai spus că vrei ajutor la <b style="color:var(--text)">' + esc(ales.t.toLowerCase()) + '</b>, '
+          + 'așa că ți-i arăt întâi pe cei ' + potriviti.size + ' care se ocupă de asta.'
+        : 'Fiecare vine cu tonul lui și cu o categorie pe care o urmărește cu prioritate — și se aplică pe loc.') +
+      '</p></div>' +
       '<div class="persona-switch" data-role="persona">' +
         Object.keys(PERSONAS).map((k) =>
           '<button data-persona="' + k + '" aria-pressed="' + (k === state.persona) + '">' + PERSONAS[k].eticheta + '</button>').join('') +
@@ -1910,6 +1967,10 @@ function pasAlegere() {
     '<div class="people">' + lista.map((c) =>
       '<button class="person" data-companion="' + c.id + '" aria-pressed="' + (c.id === state.genie.companion) + '">' +
         '<div class="tick">' + icon('check') + '</div>' +
+        (potriviti.has(c.id)
+          ? '<span class="pv-tag" style="position:absolute;top:10px;left:10px;z-index:2;background:var(--accent);' +
+            'color:var(--accent-ink);border-color:var(--accent);font-weight:600">Potrivit</span>'
+          : '') +
         portret(c) +
         '<div class="person-b"><div class="person-n">' + esc(c.nume) + ' <span>' + c.varsta + ' ani</span></div>' +
         '<div class="person-d">' + esc(c.desc) + '</div>' +
@@ -1955,6 +2016,13 @@ function pasGust() {
 
     '<div class="tune" style="grid-template-columns:minmax(0,1fr) minmax(0,320px)">' +
       '<div>' +
+        '<div class="field"><div class="field-l">' + icon('target') + 'Cu ce să te ajute în primul rând</div>' +
+          '<div class="opts">' + ORDINE_CATEGORII.map((k) =>
+            '<button class="opt" data-focus="' + k + '" aria-pressed="' + (GUST.focus === k) + '">' +
+            esc(CATEGORII[k].t) + '</button>').join('') + '</div>' +
+          '<div style="font-size:12px;color:var(--text-3);margin-top:2px">' +
+          'După asta îți propun companionul potrivit, la pasul următor.</div></div>' +
+
         '<div class="field"><div class="field-l">' + icon('spark') + 'Mă interesează</div>' +
           '<div class="opts">' + interese.map((x) =>
             '<button class="opt" data-gust="' + x.cheie + '" aria-pressed="' + !!x.it.on + '">' +
@@ -2190,19 +2258,22 @@ function butonAudio(text, over, eticheta) {
     icon('play') + (eticheta ? '<span>' + esc(eticheta) + '</span>' : '') + '</button>';
 }
 
-/** Pașii de onboarding, în ordine. Ultimul duce în aplicație. */
-const PASI_ONB = [pasSalut, pasAlegere, pasPersonalizare, pasGust];
+/**
+ * Pașii de onboarding, în ordine. Gustul vine înaintea companionului: odată ce
+ * știm cu ce vrea ajutor, îi arătăm doar companionii potriviți, nu toată lista.
+ */
+const PASI_ONB = [pasSalut, pasGust, pasAlegere, pasPersonalizare];
 
 function randPicioareOnb() {
   const p = state.pasOnb;
   const ultim = PASI_ONB.length - 1;
   const texte = [
-    'Poți schimba oricând companionul tău.',
-    'Alege pe cine simți că ți se potrivește. Nimic nu e definitiv.',
-    'Gata. De acum, Genie vorbește pe limba ta.',
+    'Durează un minut. Poți schimba orice, oricând.',
     'Cu cât îi spui mai mult, cu atât filtrează mai bine.',
+    'Ți-i arăt întâi pe cei potriviți cu ce ai ales. Nimic nu e definitiv.',
+    'Gata. De acum, Genie vorbește pe limba ta.',
   ];
-  const butoane = ['Alege companionul tău', 'Personalizează-l', 'Ce te interesează', 'Hai să începem'];
+  const butoane = ['Să începem', 'Alege-ți companionul', 'Personalizează-l', 'Intră în VIA'];
 
   return '<div class="onb-foot">' +
     (p > 0 ? '<button class="btn sec" data-act="inapoi">' + icon('prev') + 'Înapoi</button>' : '<span class="hint">' + texte[0] + '</span>') +
@@ -2216,7 +2287,13 @@ function legaOnb() {
   const root = el('onb');
   root.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
     const a = b.dataset.act;
-    if (a === 'inainte') { state.pasOnb++; randOnb(); }
+    if (a === 'inainte') {
+      state.pasOnb++;
+      // La intrarea în pasul de alegere, propunem deja un companion potrivit cu
+      // ce a cerut: omul vede o alegere făcută pentru el, nu o listă neutră.
+      if (PASI_ONB[state.pasOnb] === pasAlegere) propuneCompanion();
+      randOnb();
+    }
     else if (a === 'inapoi') { state.pasOnb--; randOnb(); }
     else if (a === 'skip' || a === 'start') { intraInApp(a === 'start'); }
     else if (a === 'voce') { redaVoce(b); }
@@ -2239,6 +2316,12 @@ function legaOnb() {
   /* Pasul de gust: fiecare apăsare schimbă profilul, recalculează agenda și
      redesenează pasul, ca numărul din dreapta să se miște sub ochii omului. */
   const dupaSchimbare = () => { salveazaGust(); reimprospateazaAgenda().then(randOnb); };
+
+  root.querySelectorAll('[data-focus]').forEach((b) => b.addEventListener('click', () => {
+    GUST.focus = b.dataset.focus;
+    salveazaGust();
+    randOnb();
+  }));
 
   root.querySelectorAll('[data-gust]').forEach((b) => b.addEventListener('click', () => {
     const [grup, i] = b.dataset.gust.split(':');
@@ -2535,6 +2618,16 @@ window.VIA = {
     temaPersona: P().nume,
     utilizator: P().utilizator,
     interese: INTERESE,
+    // Profilul merge odată cu contextul: Genie trebuie să vadă aceeași agendă
+    // pe care o vede omul pe ecran, nu una calculată pentru altcineva.
+    profil: {
+      categorii: [...new Set(Object.values(INTERESE).flat()
+        .filter((it) => it.on && it.c).flatMap((it) => it.c))],
+      artisti: GUST.artisti,
+      bugetSeara: GUST.buget,
+      seriLibere: GUST.seriLibere,
+      istoric: ISTORIC.map((h) => ({ categorie: h.categorie, locatie: h.locatie, verdict: h.verdict })),
+    },
   }),
   fluxStart, fluxDelta, fluxStop,
   adauga: adaugaMesaj,
@@ -2557,6 +2650,9 @@ window.VIA = {
 
   /* Motorul din pagină anunță că e gata; de aici încolo recalculăm local. */
   motorPornit: () => { reimprospateazaAgenda().then(() => { if (el('onb') && !state.onboardat) randOnb(); }); },
+
+  /* Alertele decise de server: ce a ales VIA să spună, și când. */
+  alerte: (lista) => { ALERTE_VIA = lista || []; if (el('view')) randVedere(); },
 };
 
 function trimiteMesaj(text) {
@@ -2774,6 +2870,26 @@ function vAlerte() {
 
   return '<div><h1 class="greet-h">Alerte</h1>' +
     '<p class="greet-sub">' + esc(subtitlu) + '</p></div>' +
+
+    // Diferența dintre un ghid și VIA: ghidul are o listă, VIA are o decizie.
+    (ALERTE_VIA.length
+      ? '<div class="panel-box" style="border-color:var(--accent);background:var(--accent-soft)">' +
+          '<div class="panel-head"><h3 style="display:flex;align-items:center;gap:9px">' + orb(12) +
+            'Ce ți-a spus VIA</h3>' +
+            '<span class="rs-legenda">' + ALERTE_VIA.length + ' din ' + (AGENDA_META ? AGENDA_META.aratate : '—') +
+            ' care treceau pragul</span></div>' +
+          '<div style="display:flex;flex-direction:column;gap:12px">' +
+            ALERTE_VIA.map((x) =>
+              '<div style="display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start">' +
+                tagRelevanta(x.scor) +
+                '<div><div style="font-weight:600;font-size:13.5px">' + esc(x.titlu) + '</div>' +
+                '<div style="font-size:12.5px;color:var(--text-2)">' + esc(x.rezumat || '') + '</div>' +
+                '<div style="font-size:12px;color:var(--text-3);margin-top:3px">' +
+                  esc(MOTIVE_ALERTA[x.motiv] || x.motiv) + ' · ' + esc(candAlerta(x.creata_la)) + '</div></div>' +
+              '</div>').join('') +
+          '</div>' +
+        '</div>'
+      : '') +
 
     '<div class="tabs">' +
       '<button class="tab" data-taba="toate" aria-pressed="' + (t === 'toate') + '">Toate</button>' +
@@ -3936,6 +4052,11 @@ function card(r, rez, acum, aparitii = 1, absolut = false) {
     categorie: r.categorie,
     // Locul, ca atare: din el învață VIA că îți place o sală anume, nu doar un gen.
     locatie: r.locatie_nume || null,
+    // Valorile brute, pentru cine are nevoie să compare, nu să afișeze — de pildă
+    // alertele, care se uită dacă a scăzut prețul sau dacă se apropie închiderea.
+    start: r.start || null,
+    sfarsit: r.sfarsit || null,
+    pretMin: r.pret_min === null || r.pret_min === undefined ? null : Number(r.pret_min),
     straturi: rez.straturi,
   };
 }
