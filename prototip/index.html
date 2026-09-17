@@ -1293,6 +1293,44 @@ const ZILE_SCURT = ['D', 'L', 'Ma', 'Mi', 'J', 'V', 'S'];
 const ZILE_LUNGI = ['duminică', 'luni', 'marți', 'miercuri', 'joi', 'vineri', 'sâmbătă'];
 
 const CHEIE_STOCARE = 'via-profil-gust';
+const CHEIE_ISTORIC = 'via-istoric';
+
+/**
+ * Ce a plăcut și ce nu. Din lista asta se hrănește stratul „preferințe învățate":
+ * fiecare notă mută scorul ieșirilor de același gen sau din același loc, iar VIA
+ * devine mai sigură pe măsură ce adună — nu dintr-o singură apăsare.
+ */
+const ISTORIC = [];
+
+/** Nota dată unui card, dacă i s-a dat vreuna. */
+function notaCard(a) {
+  const h = ISTORIC.find((x) => x.titlu === a.t);
+  return h ? h.verdict : 0;
+}
+
+/** Notează un card. Aceeași intrare notată din nou înlocuiește nota veche. */
+function noteaza(a, verdict) {
+  const i = ISTORIC.findIndex((x) => x.titlu === a.t);
+  if (i >= 0) {
+    // A doua apăsare pe același buton șterge nota: omul se poate răzgândi complet.
+    if (ISTORIC[i].verdict === verdict) { ISTORIC.splice(i, 1); }
+    else { ISTORIC[i].verdict = verdict; }
+  } else {
+    ISTORIC.push({ titlu: a.t, categorie: a.categorie, locatie: a.locatie || null, verdict });
+  }
+  salveazaIstoric();
+}
+
+function salveazaIstoric() {
+  try { localStorage.setItem(CHEIE_ISTORIC, JSON.stringify(ISTORIC.slice(-120))); } catch (e) { /* stocare blocată */ }
+}
+
+function incarcaIstoric() {
+  try {
+    const salvat = JSON.parse(localStorage.getItem(CHEIE_ISTORIC) || '[]');
+    if (Array.isArray(salvat)) ISTORIC.push(...salvat.filter((h) => h && h.titlu && h.verdict));
+  } catch (e) { /* nimic salvat sau stocare blocată */ }
+}
 
 /** Profilul rămâne între vizite. Dacă browserul refuză stocarea, mergem mai departe. */
 function salveazaGust() {
@@ -1374,7 +1412,7 @@ function reimprospateazaAgenda() {
         artisti: p.artisti,
         bugetSeara: p.buget,
         seriLibere: p.seriLibere,
-        istoric: [],
+        istoric: p.istoric,
       },
     });
     instaleazaAgenda(rez.carduri, { ...rez, ...window.VIA_MOTOR.instantaneu, intrari: undefined });
@@ -2511,6 +2549,7 @@ window.VIA = {
     artisti: GUST.artisti,
     buget: GUST.buget,
     seriLibere: GUST.seriLibere,
+    istoric: ISTORIC.map((h) => ({ categorie: h.categorie, locatie: h.locatie, verdict: h.verdict })),
   }),
 
   /* Datele reale intră prin aici. */
@@ -2572,6 +2611,17 @@ function randAlerta(a, i) {
           '<p style="font-size:13px;color:var(--text-2);margin:0 0 12px;line-height:1.6;max-width:70ch">' + esc(a.de) + '</p>' +
           '<div class="res-detail" style="display:flex;padding:0">' + a.detalii.map(([k, v]) =>
             '<span class="kv"><span>' + esc(k) + '</span><b>' + esc(v) + '</b></span>').join('') + '</div>' +
+          (a.categorie
+            ? '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);' +
+                'display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+              '<span style="font-size:12px;color:var(--text-3);margin-right:4px">Ți se potrivește?</span>' +
+              '<button class="opt" data-nota="' + i + ':1" aria-pressed="' + (notaCard(a) === 1) + '">' +
+                icon('smile') + ' Îmi place</button>' +
+              '<button class="opt" data-nota="' + i + ':-1" aria-pressed="' + (notaCard(a) === -1) + '">' +
+                'Nu e pentru mine</button>' +
+              (notaCard(a) ? '<span class="applied">' + icon('check') + 'VIA a reținut</span>' : '') +
+            '</div>'
+            : '') +
           (a.url
             ? '<a class="btn sec" style="margin-top:14px;display:inline-flex;text-decoration:none" ' +
               'href="' + esc(a.url) + '" target="_blank" rel="noopener">Deschide la sursă' + icon('arrow') + '</a>'
@@ -3164,6 +3214,40 @@ function legaVedere() {
     reimprospateazaAgenda();
   }));
 
+  v.querySelectorAll('[data-nota]').forEach((b) => b.addEventListener('click', () => {
+    const [i, verdict] = b.dataset.nota.split(':');
+    const a = ALERTE[+i];
+    if (!a) return;
+
+    // Scorurile de dinainte, ca să putem spune exact ce a mișcat nota asta.
+    const inainte = new Map(ALERTE.map((x) => [x.t, x.scor]));
+    noteaza(a, Number(verdict));
+
+    reimprospateazaAgenda().then((rez) => {
+      if (!rez) { randVedere(); return; }
+      const nota = notaCard(a);
+
+      // Ce a mișcat nota: intrări noi în listă, altele care și-au schimbat scorul,
+      // și cele care au căzut sub prag. Asta e învățarea, spusă concret.
+      const intrate = ALERTE.filter((x) => x.categorie && !inainte.has(x.t));
+      const plecate = [...inainte.keys()].filter((t) => !ALERTE.some((x) => x.t === t));
+      const schimbate = ALERTE.filter((x) => x.t !== a.t && inainte.has(x.t) && inainte.get(x.t) !== x.scor).length;
+
+      let detaliu;
+      if (intrate.length === 1) detaliu = 'A intrat în listă și „' + intrate[0].t + '".';
+      else if (intrate.length > 1) detaliu = 'Au intrat în listă încă ' + intrate.length + ' lucruri.';
+      else if (plecate.length === 1) detaliu = 'A ieșit „' + plecate[0] + '", sub prag acum.';
+      else if (plecate.length > 1) detaliu = plecate.length + ' lucruri au căzut sub prag.';
+      else if (schimbate) detaliu = schimbate + (schimbate === 1 ? ' alt scor s-a schimbat.' : ' alte scoruri s-au schimbat.');
+      else detaliu = 'Nu schimbă nimic acum, dar contează la ce urmează.';
+
+      toast(
+        nota === 0 ? 'Am șters nota' : nota > 0 ? 'Am reținut că îți place' : 'Am reținut că nu e pentru tine',
+        detaliu,
+      );
+    });
+  }));
+
   v.querySelectorAll('[data-set]').forEach((b) => b.addEventListener('click', () => {
     const camp = b.dataset.set, val = b.dataset.val;
     state.genie[camp] = val;
@@ -3283,6 +3367,7 @@ document.addEventListener('click', (e) => {
 
 /* pornire */
 incarcaGust();
+incarcaIstoric();
 setPersona('dark', false);
 aplicaCompanion(PERSONAS.dark.genieImplicit, false);
 randOnb();
@@ -3395,22 +3480,43 @@ function stratContext(intrare, profil) {
 
 /* ---------- stratul 2: preferințe învățate ---------- */
 
+/**
+ * Cât de repede are voie VIA să se încreadă în ce a învățat. Cu K = 2, o singură
+ * apăsare mută scorul doar o treime din drum, iar după patru-cinci ajunge aproape
+ * la capăt. Altfel, un „nu" izolat ar șterge o categorie întreagă.
+ */
+const INCREDERE_K = 2;
+
 function stratInvatate(intrare, profil) {
   const istoric = profil.istoric || [];
   if (!istoric.length) return { valoare: 0.5, fapt: null, incert: true };
 
-  const potriviri = istoric.filter((h) =>
-    (h.categorie && h.categorie === intrare.categorie) ||
-    (h.locatie && intrare.locatie_nume && textNormalizat(h.locatie) === textNormalizat(intrare.locatie_nume)));
+  const acelasiLoc = (h) => h.locatie && intrare.locatie_nume
+    && textNormalizat(h.locatie) === textNormalizat(intrare.locatie_nume);
+  const aceeasiCategorie = (h) => h.categorie && h.categorie === intrare.categorie;
 
+  const potriviri = istoric.filter((h) => aceeasiCategorie(h) || acelasiLoc(h));
   if (!potriviri.length) return { valoare: 0.5, fapt: null, incert: true };
 
-  // verdict: 1 = i-a plăcut, -1 = nu. Media trece din [-1, 1] în [0, 1].
+  // verdict: 1 = i-a plăcut, -1 = nu. Media stă în [-1, 1].
   const media = potriviri.reduce((s, h) => s + (Number(h.verdict) || 0), 0) / potriviri.length;
+  const n = potriviri.length;
+  const incredere = n / (n + INCREDERE_K);
+
   const plus = potriviri.filter((h) => Number(h.verdict) > 0).length;
+  const dinLoc = potriviri.filter(acelasiLoc).length;
+
   return {
-    valoare: intre((media + 1) / 2, 0.05, 1),
-    fapt: { fel: 'istoric', din: potriviri.length, plus, categorie: intrare.categorie },
+    valoare: intre(0.5 + (media / 2) * incredere, 0.05, 1),
+    incert: n < 2,
+    fapt: {
+      fel: 'istoric',
+      din: n,
+      plus,
+      // Dacă tot ce știm vine de la locul ăsta, spunem locul, nu genul.
+      locatie: dinLoc === n ? intrare.locatie_nume : null,
+      categorie: intrare.categorie,
+    },
   };
 }
 
@@ -3544,9 +3650,20 @@ function propozitie(cheie, fapt, intrare) {
       return 'Ai spus că te interesează ' + numeCat(fapt.categorie) + '.';
     case 'vecina':
       return 'E aproape de ' + numeCat(fapt.vecina) + ', pe care le urmărești.';
-    case 'istoric':
-      return fapt.plus + ' din ' + fapt.din + (fapt.din === 1 ? ' ieșire' : ' ieșiri')
-        + ' de genul ăsta ți-au plăcut.';
+    case 'istoric': {
+      const unde = fapt.locatie ? 'la ' + fapt.locatie : 'de genul ăsta';
+      if (fapt.plus === 0) {
+        return fapt.din === 1
+          ? 'Ce ai încercat ' + unde + ' nu ți-a plăcut.'
+          : 'Nimic din ce ai încercat ' + unde + ' nu ți-a plăcut până acum.';
+      }
+      if (fapt.plus === fapt.din) {
+        return fapt.din === 1
+          ? 'Ultima ieșire ' + unde + ' ți-a plăcut.'
+          : 'Toate cele ' + fapt.din + ' ieșiri ' + unde + ' ți-au plăcut.';
+      }
+      return fapt.plus + ' din ' + fapt.din + ' ieșiri ' + unde + ' ți-au plăcut.';
+    }
     case 'moment': {
       const bucati = [];
       if (fapt.seIncheie) {
@@ -3817,6 +3934,8 @@ function card(r, rez, acum, aparitii = 1, absolut = false) {
       : detalii(r, acum),
     url: r.url_bilete || r.url || null,
     categorie: r.categorie,
+    // Locul, ca atare: din el învață VIA că îți place o sală anume, nu doar un gen.
+    locatie: r.locatie_nume || null,
     straturi: rez.straturi,
   };
 }
