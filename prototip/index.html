@@ -1306,6 +1306,130 @@ const ZILE_LUNGI = ['duminică', 'luni', 'marți', 'miercuri', 'joi', 'vineri', 
 
 const CHEIE_STOCARE = 'via-profil-gust';
 const CHEIE_ISTORIC = 'via-istoric';
+const CHEIE_SALVATE = 'via-salvate';
+
+/**
+ * Ce a salvat ca să nu piardă. Reținem strictul necesar ca să putem face pe urmă
+ * un fișier de calendar: titlu, când, unde, legătura spre sursă.
+ */
+const SALVATE = [];
+
+/** Cu cât înainte vrea să fie anunțat — timpul de ajuns acolo, plus pregătirea. */
+const MINUTE_INAINTE = 45;
+
+const esteSalvat = (a) => SALVATE.some((x) => x.titlu === a.t);
+
+function salveazaCard(a) {
+  const i = SALVATE.findIndex((x) => x.titlu === a.t);
+  if (i >= 0) SALVATE.splice(i, 1);
+  else if (a.start) {
+    SALVATE.push({
+      titlu: a.t, start: a.start, sfarsit: a.sfarsit || null,
+      locatie: a.locatie || null, url: a.url || null, scor: a.scor,
+    });
+    SALVATE.sort((x, y) => Date.parse(x.start) - Date.parse(y.start));
+  }
+  try { localStorage.setItem(CHEIE_SALVATE, JSON.stringify(SALVATE)); } catch (e) { /* stocare blocată */ }
+}
+
+function incarcaSalvate() {
+  try {
+    const s = JSON.parse(localStorage.getItem(CHEIE_SALVATE) || '[]');
+    if (Array.isArray(s)) SALVATE.push(...s.filter((x) => x && x.titlu && x.start));
+  } catch (e) { /* nimic salvat */ }
+}
+
+/** Doar ce n-a trecut încă. Ce s-a terminat nu mai are ce căuta în listă. */
+function salvateViitoare() {
+  const acum = Date.now();
+  return SALVATE.filter((x) => Date.parse(x.sfarsit || x.start) > acum);
+}
+
+/** „Pleci vineri la 15:15" — ora la care trebuie să se miște, nu ora evenimentului. */
+function oraPlecarii(iso) {
+  return new Date(Date.parse(iso) - MINUTE_INAINTE * 60000);
+}
+
+const fmtScurt = new Intl.DateTimeFormat('ro-RO', {
+  timeZone: 'Europe/Bucharest', weekday: 'short', day: 'numeric', month: 'short',
+  hour: '2-digit', minute: '2-digit',
+});
+
+/**
+ * Fișier de calendar pentru un eveniment salvat, cu o singură amintire — la ora
+ * la care trebuie să plece, nu cu o săptămână înainte. Merge în Google Calendar,
+ * Outlook, Apple Calendar: toate citesc formatul ăsta.
+ */
+function fisierCalendar(x) {
+  const ceas = (d) => new Date(d).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const scapa = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/[,;]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  const sfarsit = x.sfarsit || new Date(Date.parse(x.start) + 2 * 3600e3).toISOString();
+
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//VIA//Agenda personala//RO',
+    'CALSCALE:GREGORIAN',
+    'BEGIN:VEVENT',
+    'UID:via-' + Math.abs([...x.titlu].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)) + '@via.app',
+    'DTSTAMP:' + ceas(Date.now()),
+    'DTSTART:' + ceas(x.start),
+    'DTEND:' + ceas(sfarsit),
+    'SUMMARY:' + scapa(x.titlu),
+    x.locatie ? 'LOCATION:' + scapa(x.locatie) : '',
+    x.url ? 'URL:' + scapa(x.url) : '',
+    'DESCRIPTION:' + scapa('Salvat din VIA. Relevanță ' + x.scor + '/100.' + (x.url ? '\n' + x.url : '')),
+    'BEGIN:VALARM',
+    'TRIGGER:-PT' + MINUTE_INAINTE + 'M',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:' + scapa('E timpul să pleci spre ' + (x.locatie || x.titlu)),
+    'END:VALARM',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].filter(Boolean).join('\r\n');
+}
+
+/**
+ * Descărcările sunt blocate în vizualizatorul de artifacts al Claude, iar `.ics`
+ * nu e printre tipurile pe care le acceptă. Acolo trimitem omul în Google Calendar
+ * printr-o legătură obișnuită; peste tot altundeva rămâne fișierul, care duce cu el
+ * și amintirea la ora plecării.
+ */
+const potDescarca = () => !window.claude;
+
+/** Legătură care deschide Google Calendar cu evenimentul deja completat. */
+function linkGoogleCalendar(x) {
+  const ceas = (d) => new Date(d).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const sfarsit = x.sfarsit || new Date(Date.parse(x.start) + 2 * 3600e3).toISOString();
+  const q = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: x.titlu,
+    dates: ceas(x.start) + '/' + ceas(sfarsit),
+    details: 'Salvat din VIA. Relevanță ' + x.scor + '/100.' + (x.url ? '\n' + x.url : ''),
+  });
+  if (x.locatie) q.set('location', x.locatie);
+  return 'https://calendar.google.com/calendar/render?' + q.toString();
+}
+
+/** Pune evenimentul în calendar, pe calea care merge în contextul curent. */
+function pupCalendar(x) {
+  if (!potDescarca()) { window.open(linkGoogleCalendar(x), '_blank', 'noopener'); return 'google'; }
+  descarcaCalendar(x);
+  return 'fisier';
+}
+
+/** Descarcă fișierul de calendar. Numele e curățat ca să fie valid pe orice sistem. */
+function descarcaCalendar(x) {
+  const bloc = new Blob([fisierCalendar(x)], { type: 'text/calendar;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(bloc);
+  a.download = 'via-' + x.titlu.normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40).toLowerCase() + '.ics';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 
 /**
  * Ce a plăcut și ce nu. Din lista asta se hrănește stratul „preferințe învățate":
@@ -1419,6 +1543,45 @@ function candAlerta(iso) {
   if (min < 24 * 60) return 'acum ' + Math.round(min / 60) + ' ore';
   if (min < 48 * 60) return 'ieri';
   return 'acum ' + Math.round(min / (24 * 60)) + ' zile';
+}
+
+/**
+ * Selecția de weekend — ritualul de joi seara.
+ *
+ * Apare într-o fereastră anume: de joi de la 18:00 până duminică seara. În rest
+ * nu există, pentru că un ritual care e disponibil oricând nu mai e un ritual.
+ * Ia din agendă ce cade în weekend și păstrează trei lucruri, nu zece.
+ */
+function selectiaDeWeekend() {
+  if (!AGENDA_META) return null;
+
+  const acum = new Date();
+  const zi = acum.getDay();                 // 0 = duminică
+  // Joi e ziua livrării; selecția rămâne pe ecran până se termină weekendul.
+  const inFereastra = zi === 4 || zi === 5 || zi === 6 || zi === 0;
+  if (!inFereastra) return null;
+
+  // Ce cade vineri, sâmbătă sau duminică și n-a trecut încă.
+  const carduri = ALERTE.filter((a) => {
+    if (!a.start || !a.categorie) return false;
+    const sfarsit = Date.parse(a.sfarsit || a.start);
+    if (sfarsit < acum.getTime()) return false;
+    const z = new Date(a.start).getDay();
+    // Ce ține mai multe zile prinde weekendul oricum.
+    return z === 5 || z === 6 || z === 0 || (a.sfarsit && a.sfarsit !== a.start);
+  }).slice(0, 3);
+
+  if (!carduri.length) return null;
+
+  return {
+    carduri,
+    cand: zi === 4 ? 'joi seara, pentru weekend' : 'selecția ta de weekend',
+    intro: carduri.length === 3
+      ? 'Trei lucruri pentru zilele astea, alese din ' + AGENDA_META.citite
+        + ' pe care le-am verificat. Atât — restul n-ar fi meritat drumul.'
+      : (carduri.length === 1 ? 'Un singur lucru' : carduri.length + ' lucruri')
+        + ' pentru weekendul ăsta. Puțin, dar exact ce trebuie.',
+  };
 }
 
 /** Fereastra de timp pentru care se cere agenda. Se schimbă din ecranul Acasă. */
@@ -2747,7 +2910,22 @@ function randAlerta(a, i) {
                   '</button>'
                 : '') +
               (notaCard(a) ? '<span class="applied">' + icon('check') + 'VIA a reținut</span>' : '') +
-            '</div>'
+            '</div>' +
+            (a.start
+              ? '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+                '<button class="opt" data-salveaza="' + i + '" aria-pressed="' + esteSalvat(a) + '">' +
+                  icon(esteSalvat(a) ? 'check' : 'cal') + ' ' +
+                  (esteSalvat(a) ? 'Salvat' : 'Salvează') + '</button>' +
+                (esteSalvat(a)
+                  ? '<button class="opt" data-calendar="' + i + '">' + icon('clock') +
+                    ' Pune-l în calendar</button>' +
+                    '<span style="font-size:12px;color:var(--text-3)">' +
+                    (potDescarca()
+                      ? 'Te anunță cu ' + MINUTE_INAINTE + ' de minute înainte, cât să ajungi'
+                      : 'Se deschide în Google Calendar') + '</span>'
+                  : '') +
+              '</div>'
+              : '')
             : '') +
           (a.url
             ? '<a class="btn sec" style="margin-top:14px;display:inline-flex;text-decoration:none" ' +
@@ -2781,6 +2959,23 @@ function vAcasa() {
 
     '<div class="home-grid">' +
       '<div style="display:flex;flex-direction:column;gap:var(--sp-5)">' +
+
+        // Ritualul de joi: selecția pentru weekend, livrată la aceeași oră.
+        // Apare doar în fereastra ei — joi de la 18:00 până duminică seara.
+        (selectiaDeWeekend()
+          ? (() => {
+            const w = selectiaDeWeekend();
+            return '<div class="panel-box" style="border-color:var(--accent);background:var(--accent-soft)">' +
+              '<div class="panel-head"><h3 style="display:flex;align-items:center;gap:9px">' + orb(12) +
+                'Weekendul tău</h3>' +
+                '<span class="rs-legenda">' + esc(w.cand) + '</span></div>' +
+              '<p style="font-size:13px;color:var(--text-2);margin:0 0 14px;max-width:62ch">' +
+                esc(w.intro) + '</p>' +
+              '<div style="display:flex;flex-direction:column;gap:10px">' +
+                w.carduri.map((c) => randAlerta(c, ALERTE.indexOf(c))).join('') +
+              '</div></div>';
+          })()
+          : '') +
 
         '<div class="section-h"><h2>Oportunități pentru tine</h2>' +
           '<button class="link-b" data-go="alerte">Vezi toate</button></div>' +
@@ -2841,6 +3036,31 @@ function vAcasa() {
               '<span class="mono">' + esc(m.v) + (m.u ? ' ' + esc(m.u) : '') + '</span></div>').join('') +
           '</div>' +
         '</div>' +
+
+        // Ce a salvat, cu ora la care trebuie să plece — nu ora evenimentului.
+        (salvateViitoare().length
+          ? '<div class="panel-box">' +
+              '<div class="panel-head"><h3>Salvate</h3>' +
+                '<span class="rs-legenda">' + salvateViitoare().length + ' care urmează</span></div>' +
+              salvateViitoare().slice(0, 3).map((x, i) =>
+                '<div class="goal" style="align-items:flex-start">' +
+                  '<span class="goal-ic">' + icon('cal') + '</span>' +
+                  '<div class="goal-b">' +
+                    '<div class="goal-t" style="font-weight:600">' + esc(x.titlu) + '</div>' +
+                    '<div style="font-size:11.5px;color:var(--text-2)">' +
+                      esc(fmtScurt.format(Date.parse(x.start))) +
+                      (x.locatie ? ' · ' + esc(x.locatie) : '') + '</div>' +
+                    '<div style="font-size:11.5px;color:var(--accent);margin-top:2px">' +
+                      'Pleci ' + esc(fmtScurt.format(oraPlecarii(x.start))) + '</div>' +
+                    '<div style="display:flex;gap:6px;margin-top:6px">' +
+                      '<button class="ghost-b" style="padding:4px 9px" data-calendar-salvat="' + i + '">' +
+                        icon('clock') + ' În calendar</button>' +
+                      '<button class="ghost-b" style="padding:4px 9px" data-sterge-salvat="' + i + '">Scoate</button>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>').join('') +
+            '</div>'
+          : '') +
 
         '<div class="panel-box">' +
           '<div class="panel-head"><h3>Ce urmărește VIA</h3><button class="link-b" data-go="exploreaza">Ajustează</button></div>' +
@@ -3379,6 +3599,43 @@ function legaVedere() {
     reimprospateazaAgenda();
   }));
 
+  v.querySelectorAll('[data-salveaza]').forEach((b) => b.addEventListener('click', () => {
+    const a = ALERTE[+b.dataset.salveaza];
+    if (!a) return;
+    const eraSalvat = esteSalvat(a);
+    salveazaCard(a);
+    randVedere();
+    randRail();
+    if (eraSalvat) { toast('Scos din salvate', a.t); return; }
+    const p = oraPlecarii(a.start);
+    toast('Salvat: ' + a.t, 'Pleci ' + fmtScurt.format(p) + ', ca să ajungi la timp.');
+  }));
+
+  v.querySelectorAll('[data-calendar]').forEach((b) => b.addEventListener('click', () => {
+    const a = ALERTE[+b.dataset.calendar];
+    const x = SALVATE.find((s) => s.titlu === (a && a.t));
+    if (!x) return;
+    const cum = pupCalendar(x);
+    toast(cum === 'google' ? 'Se deschide în Google Calendar' : 'Fișier de calendar descărcat',
+      cum === 'google' ? x.titlu : 'Deschide-l și intră în calendarul tău, cu amintirea la ora plecării.');
+  }));
+
+  v.querySelectorAll('[data-calendar-salvat]').forEach((b) => b.addEventListener('click', () => {
+    const x = salvateViitoare()[+b.dataset.calendarSalvat];
+    if (!x) return;
+    const cum = pupCalendar(x);
+    toast(cum === 'google' ? 'Se deschide în Google Calendar' : 'Fișier de calendar descărcat', x.titlu);
+  }));
+
+  v.querySelectorAll('[data-sterge-salvat]').forEach((b) => b.addEventListener('click', () => {
+    const x = salvateViitoare()[+b.dataset.stergeSalvat];
+    if (!x) return;
+    salveazaCard({ t: x.titlu });
+    randVedere();
+    randRail();
+    toast('Scos din salvate', x.titlu);
+  }));
+
   v.querySelectorAll('[data-scoate]').forEach((b) => b.addEventListener('click', () => {
     const i = b.dataset.scoate.indexOf(':');
     const fel = b.dataset.scoate.slice(0, i);
@@ -3572,6 +3829,7 @@ document.addEventListener('click', (e) => {
 /* pornire */
 incarcaGust();
 incarcaIstoric();
+incarcaSalvate();
 setPersona('dark', false);
 aplicaCompanion(PERSONAS.dark.genieImplicit, false);
 randOnb();
