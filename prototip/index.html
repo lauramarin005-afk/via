@@ -1282,6 +1282,13 @@ const GUST_IMPLICIT = {
 
 const GUST = { ...GUST_IMPLICIT };
 
+/* Locurile urmărite. Ce apare la ele intră în agendă indiferent de gen —
+   dacă ai cerut să fii anunțat de la Control Club, asta ai cerut. */
+GUST_IMPLICIT.locuri = [];
+GUST.locuri = [];
+
+const urmaresteLocul = (nume) => GUST.locuri.some((l) => l.toLowerCase() === String(nume || '').toLowerCase());
+
 /* Cu ce vrea să fie ajutat în primul rând. Din asta se propune companionul
    potrivit: fiecare Genie are o categorie pe care o urmărește cu prioritate. */
 GUST_IMPLICIT.focus = 'oportunitati';
@@ -1344,6 +1351,7 @@ function salveazaGust() {
       buget: GUST.buget,
       seriLibere: GUST.seriLibere,
       artisti: GUST.artisti,
+      locuri: GUST.locuri,
       focus: GUST.focus,
       oprite: Object.entries(INTERESE).flatMap(([k, lista]) =>
         lista.map((it, i) => (it.on ? null : k + ':' + i)).filter(Boolean)),
@@ -1358,6 +1366,7 @@ function incarcaGust() {
   if (Number(salvat.buget) > 0) GUST.buget = Number(salvat.buget);
   if (Array.isArray(salvat.seriLibere)) GUST.seriLibere = salvat.seriLibere.filter((z) => z >= 0 && z <= 6);
   if (Array.isArray(salvat.artisti)) GUST.artisti = salvat.artisti;
+  if (Array.isArray(salvat.locuri)) GUST.locuri = salvat.locuri.filter(Boolean);
   if (CATEGORII[salvat.focus]) GUST.focus = salvat.focus;
   if (Array.isArray(salvat.oprite)) {
     const oprite = new Set(salvat.oprite);
@@ -1396,6 +1405,7 @@ let ALERTE_VIA = [];
 
 /** De ce te-a întrerupt VIA, spus omenește. */
 const MOTIVE_ALERTA = {
+  urmarit: 'De la ceva ce urmărești',
   noua: 'Apărut de curând',
   pret: 'A scăzut prețul',
   final: 'Se închide curând',
@@ -1441,6 +1451,7 @@ function reimprospateazaAgenda() {
       profil: {
         categorii: p.categorii,
         artisti: p.artisti,
+        locuri: p.locuri,
         bugetSeara: p.buget,
         seriLibere: p.seriLibere,
         istoric: p.istoric,
@@ -1477,15 +1488,15 @@ function instaleazaAgenda(carduri, meta) {
    schimbă efectiv ce primește în agendă. Fără `c` = încă fără sursă de date. */
 const INTERESE = {
   sanatate: [
-    { t:'Calitatea somnului', on:true },
-    { t:'Activitate zilnică', on:true },
-    { t:'Ritm cardiac și recuperare', on:true },
-    { t:'Farmacii și clinici în apropiere', on:true },
-    { t:'Controale medicale periodice', on:false },
+    { t:'Calitatea somnului', scurt:'Somn', on:true },
+    { t:'Activitate zilnică', scurt:'Mișcare', on:true },
+    { t:'Ritm cardiac și recuperare', scurt:'Recuperare', on:true },
+    { t:'Farmacii și clinici în apropiere', scurt:'Farmacii și clinici', on:true },
+    { t:'Controale medicale periodice', scurt:'Controale', on:false },
   ],
   oportunitati: [
-    { t:'Zboruri către destinații exotice', on:true },
-    { t:'City breaks în Europa', on:true },
+    { t:'Zboruri către destinații exotice', scurt:'Zboruri', on:true },
+    { t:'City breaks în Europa', scurt:'City breaks', on:true },
     { t:'Concerte rock și metal', scurt:'Concerte', on:true, c:['concert', 'festival'] },
     { t:'Teatru și spectacole', scurt:'Teatru', on:true, c:['teatru', 'muzica-clasica'] },
     { t:'Stand-up și comedie', scurt:'Stand-up', on:true, c:['stand-up'] },
@@ -1494,18 +1505,18 @@ const INTERESE = {
     { t:'Expoziții și muzee', scurt:'Expoziții', on:true, c:['expozitie', 'cultura', 'atelier'] },
     { t:'Ateliere și cursuri scurte', scurt:'Ateliere', on:true, c:['atelier'] },
     { t:'Petreceri și cluburi', scurt:'Cluburi', on:false, c:['club', 'social'] },
-    { t:'Oferte la echipamente foto', on:false },
+    { t:'Oferte la echipamente foto', scurt:'Echipamente foto', on:false },
   ],
   productivitate: [
-    { t:'Pregătirea ședințelor importante', on:true },
-    { t:'Ferestre de focus fără întreruperi', on:true },
-    { t:'Termene care se apropie', on:true },
-    { t:'Rezumate de dimineață', on:false },
+    { t:'Pregătirea ședințelor importante', scurt:'Ședințe', on:true },
+    { t:'Ferestre de focus fără întreruperi', scurt:'Ferestre de focus', on:true },
+    { t:'Termene care se apropie', scurt:'Termene', on:true },
+    { t:'Rezumate de dimineață', scurt:'Rezumat de dimineață', on:false },
   ],
   conexiune: [
-    { t:'Aniversări ale persoanelor apropiate', on:true },
-    { t:'Prieteni cu care n-am mai vorbit', on:true },
-    { t:'Experiențe de făcut împreună', on:false },
+    { t:'Aniversări ale persoanelor apropiate', scurt:'Aniversări', on:true },
+    { t:'Prieteni cu care n-am mai vorbit', scurt:'Reconectare', on:true },
+    { t:'Experiențe de făcut împreună', scurt:'Ieșiri împreună', on:false },
   ],
 };
 
@@ -2003,8 +2014,11 @@ function pasAlegere() {
  * arată, sub alegeri, câte lucruri trec pragul chiar acum.
  */
 function pasGust() {
-  const interese = Object.entries(INTERESE).flatMap(([grup, lista]) =>
-    lista.map((it, i) => ({ it, cheie: grup + ':' + i })).filter((x) => x.it.c));
+  // Interesele din categoria pe care tocmai a ales-o. Dacă a spus „sănătate",
+  // n-are sens să-l întrebăm despre concerte.
+  const grup = GUST.focus;
+  const interese = (INTERESE[grup] || []).map((it, i) => ({ it, cheie: grup + ':' + i }));
+  const cuDate = interese.filter((x) => x.it.c).length;
 
   const a = AGENDA_META;
 
@@ -2023,10 +2037,19 @@ function pasGust() {
           '<div style="font-size:12px;color:var(--text-3);margin-top:2px">' +
           'După asta îți propun companionul potrivit, la pasul următor.</div></div>' +
 
-        '<div class="field"><div class="field-l">' + icon('spark') + 'Mă interesează</div>' +
+        '<div class="field"><div class="field-l">' + icon(CATEGORII[grup].ic) +
+          'La ' + esc(CATEGORII[grup].t.toLowerCase()) + ', mă interesează</div>' +
           '<div class="opts">' + interese.map((x) =>
             '<button class="opt" data-gust="' + x.cheie + '" aria-pressed="' + !!x.it.on + '">' +
-            esc(x.it.scurt || x.it.t) + '</button>').join('') + '</div></div>' +
+            esc(x.it.scurt || x.it.t) + '</button>').join('') + '</div>' +
+          // Nu toate categoriile au încă sursă de date. Spunem asta, în loc să
+          // lăsăm impresia că bifele fac ceva ce nu fac.
+          (cuDate
+            ? ''
+            : '<div style="font-size:12px;color:var(--text-3);margin-top:2px">' +
+              'Sursele pentru ' + esc(CATEGORII[grup].t.toLowerCase()) + ' vin în faza următoare. ' +
+              'Deocamdată VIA urmărește ce se întâmplă în oraș — vezi mai jos.</div>') +
+        '</div>' +
 
         '<div class="field"><div class="field-l">' + icon('ticket') + 'Cât dau pe o ieșire</div>' +
           '<div class="opts">' + BUGETE.map((b) =>
@@ -2624,6 +2647,7 @@ window.VIA = {
       categorii: [...new Set(Object.values(INTERESE).flat()
         .filter((it) => it.on && it.c).flatMap((it) => it.c))],
       artisti: GUST.artisti,
+      locuri: GUST.locuri,
       bugetSeara: GUST.buget,
       seriLibere: GUST.seriLibere,
       istoric: ISTORIC.map((h) => ({ categorie: h.categorie, locatie: h.locatie, verdict: h.verdict })),
@@ -2640,6 +2664,7 @@ window.VIA = {
     categorii: [...new Set(Object.values(INTERESE).flat()
       .filter((it) => it.on && it.c).flatMap((it) => it.c))],
     artisti: GUST.artisti,
+    locuri: GUST.locuri,
     buget: GUST.buget,
     seriLibere: GUST.seriLibere,
     istoric: ISTORIC.map((h) => ({ categorie: h.categorie, locatie: h.locatie, verdict: h.verdict })),
@@ -2715,6 +2740,12 @@ function randAlerta(a, i) {
                 icon('smile') + ' Îmi place</button>' +
               '<button class="opt" data-nota="' + i + ':-1" aria-pressed="' + (notaCard(a) === -1) + '">' +
                 'Nu e pentru mine</button>' +
+              (a.locatie
+                ? '<button class="opt" data-urmareste="' + i + '" aria-pressed="' + urmaresteLocul(a.locatie) + '" ' +
+                  'style="margin-left:auto">' + icon('pin') + ' ' +
+                  (urmaresteLocul(a.locatie) ? 'Urmărești ' + esc(a.locatie) : 'Urmărește ' + esc(a.locatie)) +
+                  '</button>'
+                : '') +
               (notaCard(a) ? '<span class="applied">' + icon('check') + 'VIA a reținut</span>' : '') +
             '</div>'
             : '') +
@@ -2831,8 +2862,26 @@ function vAcasa() {
 }
 
 function vExploreaza() {
+  const urmarite = [
+    ...GUST.artisti.map((x) => ({ t: x, fel: 'artist' })),
+    ...GUST.locuri.map((x) => ({ t: x, fel: 'loc' })),
+  ];
+
   return '<div><h1 class="greet-h">Explorează</h1>' +
     '<p class="greet-sub">Cele patru categorii pe care le acoperă VIA. Bifează ce vrei să urmărească — cu cât îi spui mai mult, cu atât filtrează mai bine.</p></div>' +
+
+    // Ce urmărește punctual: nume de artiști și locuri, nu doar genuri.
+    '<div class="panel-box">' +
+      '<div class="panel-head"><h3>Urmărite</h3>' +
+        '<span class="rs-legenda">Ce apare de la ei ajunge la tine, indiferent de gen</span></div>' +
+      (urmarite.length
+        ? '<div style="display:flex;gap:8px;flex-wrap:wrap">' + urmarite.map((u) =>
+            '<button class="opt" data-scoate="' + esc(u.fel) + ':' + esc(u.t) + '" aria-pressed="true" ' +
+            'title="Apasă ca să nu mai urmărești">' +
+            icon(u.fel === 'artist' ? 'music' : 'pin') + ' ' + esc(u.t) + '</button>').join('') + '</div>'
+        : '<p style="font-size:13px;color:var(--text-3);margin:0">' +
+          'Nimic încă. Deschide o alertă și apasă „Urmărește" pe locul de acolo.</p>') +
+    '</div>' +
 
     ORDINE_CATEGORII.map((k) => {
       const c = CATEGORII[k];
@@ -3330,6 +3379,45 @@ function legaVedere() {
     reimprospateazaAgenda();
   }));
 
+  v.querySelectorAll('[data-scoate]').forEach((b) => b.addEventListener('click', () => {
+    const i = b.dataset.scoate.indexOf(':');
+    const fel = b.dataset.scoate.slice(0, i);
+    const nume = b.dataset.scoate.slice(i + 1);
+    const camp = fel === 'artist' ? 'artisti' : 'locuri';
+    GUST[camp] = GUST[camp].filter((x) => x.toLowerCase() !== nume.toLowerCase());
+    salveazaGust();
+    reimprospateazaAgenda().then(() => {
+      randVedere();
+      toast('Nu mai urmărești ' + nume, 'Poți să-l pui la loc oricând.');
+    });
+  }));
+
+  v.querySelectorAll('[data-urmareste]').forEach((b) => b.addEventListener('click', () => {
+    const a = ALERTE[+b.dataset.urmareste];
+    if (!a || !a.locatie) return;
+
+    const urmarea = urmaresteLocul(a.locatie);
+    GUST.locuri = urmarea
+      ? GUST.locuri.filter((l) => l.toLowerCase() !== a.locatie.toLowerCase())
+      : [...GUST.locuri, a.locatie];
+    salveazaGust();
+
+    reimprospateazaAgenda().then((rez) => {
+      randVedere();
+      if (!rez) return;
+      // Câte lucruri de la locul ăsta au intrat în agendă — asta a cerut, asta primește.
+      const deAcolo = ALERTE.filter((x) => x.locatie === a.locatie).length;
+      toast(
+        urmarea ? 'Nu mai urmărești ' + a.locatie : 'Urmărești ' + a.locatie,
+        urmarea
+          ? 'Nu te mai anunț când apare ceva acolo.'
+          : deAcolo > 1
+            ? 'Am ' + deAcolo + ' lucruri de acolo în agendă. Te anunț când apare altceva.'
+            : 'Te anunț când apare ceva nou acolo.',
+      );
+    });
+  }));
+
   v.querySelectorAll('[data-nota]').forEach((b) => b.addEventListener('click', () => {
     const [i, verdict] = b.dataset.nota.split(':');
     const a = ALERTE[+i];
@@ -3530,6 +3618,7 @@ const PROFIL_IMPLICIT = {
   oras: 'București',
   categorii: ['concert', 'teatru', 'expozitie', 'stand-up', 'festival', 'film'],
   artisti: [],
+  locuri: [],
   bugetSeara: 150,
   moneda: 'RON',
   seriLibere: [4, 5, 6],            // joi, vineri, sâmbătă (0 = duminică)
@@ -3585,6 +3674,12 @@ function stratContext(intrare, profil) {
   const unde = textNormalizat(intrare.titlu + ' ' + (intrare.titlu_alt || '') + ' ' + listaJson(intrare.artisti).join(' '));
   const artist = (profil.artisti || []).find((a) => a && unde.includes(textNormalizat(a)));
   if (artist) return { valoare: 1, fapt: { fel: 'artist', artist } };
+
+  // Un loc urmărit la fel: dacă ai cerut să fii anunțat de la Control Club,
+  // ce se întâmplă acolo contează, indiferent de gen.
+  const loc = (profil.locuri || []).find((l) => l && intrare.locatie_nume
+    && textNormalizat(l) === textNormalizat(intrare.locatie_nume));
+  if (loc) return { valoare: 1, fapt: { fel: 'loc', loc: intrare.locatie_nume } };
 
   if (urmarite.has(cat)) return { valoare: 1, fapt: { fel: 'categorie', categorie: cat } };
 
@@ -3762,6 +3857,8 @@ function propozitie(cheie, fapt, intrare) {
   switch (fapt.fel) {
     case 'artist':
       return fapt.artist + ' e pe lista artiștilor pe care îi urmărești.';
+    case 'loc':
+      return 'Urmărești ce se întâmplă la ' + fapt.loc + '.';
     case 'categorie':
       return 'Ai spus că te interesează ' + numeCat(fapt.categorie) + '.';
     case 'vecina':
@@ -3832,6 +3929,7 @@ function insigna(straturi, intrare) {
   }
   if (f.unicitate?.fel === 'proprie') return { text: 'Din baza noastră', bun: true };
   if (f.context?.fel === 'artist') return { text: 'Artist pe care îl urmărești', bun: true };
+  if (f.context?.fel === 'loc') return { text: 'La un loc pe care îl urmărești', bun: true };
   if (f.pret?.fel === 'gratuit') return { text: 'Intrare liberă', bun: true };
   if (f.pret && f.pret.raport <= 0.7) {
     return { text: Math.round((1 - f.pret.raport) * 100) + '% sub bugetul tău', bun: true };
